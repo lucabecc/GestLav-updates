@@ -7,15 +7,16 @@ import serial
 import socket 
 import time
 import urllib.request
+import shutil 
 
 app = Flask(__name__)
 
 # --- CONFIGURAZIONE ---
 SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Cartella corrente sicura
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
-# ⚠️ SOSTITUISCI 'TUO_NOME_UTENTE' QUI SOTTO CON IL TUO VERO UTENTE GITHUB!
 GITHUB_USER = "lucabecc" 
 GITHUB_REPO = f"https://raw.githubusercontent.com/{GITHUB_USER}/GestLav-updates/main/"
 
@@ -54,12 +55,12 @@ LISTINO_DEFAULT = [
 ]
 
 def get_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(os.path.join(BASE_DIR, DB_NAME))
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    if not os.path.exists(DB_NAME):
+    if not os.path.exists(os.path.join(BASE_DIR, DB_NAME)):
         conn = get_db()
         cursor = conn.cursor()
         
@@ -127,9 +128,9 @@ def init_db():
         conn.commit()
         conn.close()
         
-    # Crea il file version.txt se non esiste
-    if not os.path.exists("version.txt"):
-        with open("version.txt", "w") as f:
+    v_file = os.path.join(BASE_DIR, "version.txt")
+    if not os.path.exists(v_file):
+        with open(v_file, "w") as f:
             f.write("1.0")
 
 def get_setting(chiave):
@@ -191,7 +192,6 @@ def stampa_etichette(num_visibile, carrello, cliente_nome, data_ritiro_str):
     if tot == 0:
         return True
 
-    # SE E' UNA PORTA COM (es. "COM1")
     if porta_o_stampante.upper().startswith("COM"):
         try:
             ser = serial.Serial(porta_o_stampante, 9600, timeout=1)
@@ -208,8 +208,6 @@ def stampa_etichette(num_visibile, carrello, cliente_nome, data_ritiro_str):
             return True
         except:
             return False
-            
-    # ALTRIMENTI USA DRIVER WINDOWS
     else:
         try:
             hPrinter = win32print.OpenPrinter(porta_o_stampante)
@@ -373,6 +371,11 @@ def api_get_settings():
     cursor.execute("SELECT * FROM settings")
     data = {row['chiave']: row['valore'] for row in cursor.fetchall()}
     conn.close()
+    
+    # ⚠️ FIX: Controlla cartella backup nel percorso assoluto
+    backup_file = os.path.join(BASE_DIR, "backup", "app.py")
+    data['has_backup'] = 1 if os.path.exists(backup_file) else 0
+    
     return jsonify(data)
 
 @app.route('/api/save_settings', methods=['POST'])
@@ -386,7 +389,6 @@ def api_reset_counters():
     set_setting("last_reset_date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     return jsonify({'status': 'success'})
 
-# --- NUOVA ROTTA: RILEVA STAMPANTI SISTEMA ---
 @app.route('/api/get_system_printers')
 def get_system_printers():
     try:
@@ -394,7 +396,6 @@ def get_system_printers():
         printers = [printer[2] for printer in win32print.EnumPrinters(flags)]
         return jsonify(printers)
     except Exception as e:
-        print(f"Errore rilevamento stampanti: {e}")
         return jsonify([])
 
 @app.route('/api/elimina_ordine_definitivo', methods=['POST'])
@@ -589,7 +590,98 @@ def consegna_items():
     conn.close()
     return jsonify({'status': 'success', 'msg': msg})
 
-# --- GESTIONE RICERCA DOPPIA (SCONTRINO vs CAPO) ---
+@app.route('/salva_ordine', methods=['POST'])
+def salva_ordine():
+    d = request.json
+    listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
+    
+    carrello, data_ritiro_raw = d['carrello'], d['data_ritiro']
+    sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
+    pagato, metodo = d['pagato'], d['metodo']
+    
+    dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
+    data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
+    
+    totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
+    
+    solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
+    
+    if acconto >= totale: pagato = True
+    else: pagato = False
+    if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
+
+    conn = get_db()
+    cursor = conn.cursor()
+    last_reset = get_setting("last_reset_date")
+    cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,))
+    nuovo_num = cursor.fetchone()[0] + 1
+    
+    stampa_ora = False
+    contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello)
+    fiscal_always = get_setting("fiscal_always") == "1"
+    if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
+    
+    fiscale_desk_val = 1 if stampa_ora else 0
+    
+    cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                   (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione'))
+    oid = cursor.lastrowid
+    
+    stato_lavorazione = 1 if solo_prodotti else 0
+    for i in carrello:
+        cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione) VALUES (?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione))
+    conn.commit()
+    conn.close()
+
+    if not solo_prodotti:
+        stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo)
+        stampa_etichette(nuovo_num, carrello, d['cliente_nome'], data_ritiro_str)
+    
+    if stampa_ora:
+        stampa_fiscale(carrello, sconto)
+    
+    return jsonify({"status": "success", "id_ordine": oid})
+
+@app.route('/sospendi_ordine', methods=['POST'])
+def sospendi_ordine():
+    d=request.json
+    conn=get_db()
+    cursor=conn.cursor()
+    cursor.execute("INSERT INTO ordini (cliente_id, data_ingresso, data_ritiro, totale, stato, sede) VALUES (?, ?, ?, ?, 'Sospeso', ?)", (d['cliente_id'], datetime.now(), d['data_ritiro'], 0, SEDE))
+    oid=cursor.lastrowid
+    for i in d['carrello']: 
+        cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo) VALUES (?, ?, ?)", (oid, i['nome'], i['prezzo']))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success'})
+
+@app.route('/recupera_sospesi')
+def recupera_sospesi():
+    conn=get_db()
+    cursor=conn.cursor()
+    cursor.execute("SELECT o.id, c.nome, c.cognome, o.data_ingresso FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE o.stato = 'Sospeso' ORDER BY o.id DESC")
+    r=[dict(x) for x in cursor.fetchall()]
+    conn.close()
+    return jsonify(r)
+
+@app.route('/carica_sospeso', methods=['POST'])
+def carica_sospeso():
+    oid=request.json['id']
+    conn=get_db()
+    cursor=conn.cursor()
+    cursor.execute("SELECT * FROM ordini WHERE id=?",(oid,))
+    o=dict(cursor.fetchone())
+    cursor.execute("SELECT * FROM clienti WHERE id=?",(o['cliente_id'],))
+    c=dict(cursor.fetchone())
+    c['nome_completo']=f"{c['nome']} {c['cognome'] or ''}".strip()
+    cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id=?",(oid,))
+    l=[dict(x) for x in cursor.fetchall()]
+    cursor.execute("DELETE FROM dettagli_ordine WHERE ordine_id=?",(oid,))
+    cursor.execute("DELETE FROM ordini WHERE id=?",(oid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'cliente':c, 'carrello':l, 'data_ritiro':o['data_ritiro']})
+
 @app.route('/get_items_scontrino', methods=['POST'])
 def get_items_scontrino():
     tipo = request.json.get('tipo') 
@@ -602,19 +694,17 @@ def get_items_scontrino():
     order_id = None
     
     if tipo == 'ordine':
-        # Cerca ordine completo
         cursor.execute("SELECT id FROM ordini WHERE num_scontrino = ? AND stato != 'Consegnato'", (valore,))
         res = cursor.fetchone()
         if res:
             order_id = res[0]
     
     elif tipo == 'capo':
-        # Cerca singolo capo
         cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ? AND ritirato = 0", (valore,))
         res = cursor.fetchone()
         if res:
             order_id = res[0]
-            target_item_id = int(valore) # Questo ID deve essere selezionato
+            target_item_id = int(valore)
             
     if not order_id:
         conn.close()
@@ -661,41 +751,79 @@ def modifica_capo_ordine():
     conn.close()
     return jsonify({'status': 'success'})
 
-# --- ROTTA AGGIORNAMENTO SOFTWARE (PER IL FUTURO) ---
+# --- SISTEMA AGGIORNAMENTO CON BACKUP ---
 @app.route('/api/check_update')
 def check_update():
     try:
-        # Legge versione locale
-        with open("version.txt", "r") as f:
+        # Legge versione locale con percorso assoluto
+        v_file = os.path.join(BASE_DIR, "version.txt")
+        with open(v_file, "r") as f:
             local_ver = f.read().strip()
-        
-        # Legge versione remota da GitHub
+            
         remote_url = GITHUB_REPO + "version.txt"
         with urllib.request.urlopen(remote_url) as response:
             remote_ver = response.read().decode('utf-8').strip()
-            
+        
+        # Verifica se esiste un backup
+        backup_path = os.path.join(BASE_DIR, "backup", "app.py")
+        has_backup = os.path.exists(backup_path)
+        
         if remote_ver != local_ver:
-            return jsonify({'update_available': True, 'local': local_ver, 'remote': remote_ver})
-        return jsonify({'update_available': False})
+            return jsonify({'update_available': True, 'local': local_ver, 'remote': remote_ver, 'has_backup': has_backup})
+        return jsonify({'update_available': False, 'has_backup': has_backup})
     except Exception as e:
         return jsonify({'error': str(e)})
 
 @app.route('/api/perform_update', methods=['POST'])
 def perform_update():
     try:
-        # Scarica app.py
-        urllib.request.urlretrieve(GITHUB_REPO + "app.py", "app.py")
+        backup_dir = os.path.join(BASE_DIR, "backup")
+        templates_dir = os.path.join(BASE_DIR, "templates")
         
-        # Scarica index.html (attenzione al percorso templates)
-        if not os.path.exists("templates"): os.makedirs("templates")
-        urllib.request.urlretrieve(GITHUB_REPO + "templates/index.html", "templates/index.html")
+        # 1. CREA BACKUP DEI FILE ATTUALI
+        if not os.path.exists(backup_dir): os.makedirs(backup_dir)
         
-        # Scarica versione
-        urllib.request.urlretrieve(GITHUB_REPO + "version.txt", "version.txt")
+        shutil.copy(os.path.join(BASE_DIR, "app.py"), os.path.join(backup_dir, "app.py"))
         
-        return jsonify({'status': 'success', 'msg': 'Aggiornamento completato! Riavvia il programma.'})
+        if os.path.exists(os.path.join(templates_dir, "index.html")):
+            shutil.copy(os.path.join(templates_dir, "index.html"), os.path.join(backup_dir, "index.html"))
+            
+        if os.path.exists(os.path.join(BASE_DIR, "version.txt")):
+            shutil.copy(os.path.join(BASE_DIR, "version.txt"), os.path.join(backup_dir, "version.txt"))
+        
+        # 2. SCARICA I NUOVI FILE
+        urllib.request.urlretrieve(GITHUB_REPO + "app.py", os.path.join(BASE_DIR, "app.py"))
+        
+        if not os.path.exists(templates_dir): os.makedirs(templates_dir)
+        urllib.request.urlretrieve(GITHUB_REPO + "templates/index.html", os.path.join(templates_dir, "index.html"))
+        
+        urllib.request.urlretrieve(GITHUB_REPO + "version.txt", os.path.join(BASE_DIR, "version.txt"))
+        
+        return jsonify({'status': 'success', 'msg': 'Aggiornamento completato! (Backup salvato)'})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
+
+@app.route('/api/restore_backup', methods=['POST'])
+def restore_backup():
+    try:
+        backup_dir = os.path.join(BASE_DIR, "backup")
+        templates_dir = os.path.join(BASE_DIR, "templates")
+        
+        if not os.path.exists(os.path.join(backup_dir, "app.py")): 
+            return jsonify({'status':'error', 'msg':'Nessun backup trovato'})
+        
+        # Ripristina i file dalla cartella backup
+        shutil.copy(os.path.join(backup_dir, "app.py"), os.path.join(BASE_DIR, "app.py"))
+        
+        if os.path.exists(os.path.join(backup_dir, "index.html")):
+            shutil.copy(os.path.join(backup_dir, "index.html"), os.path.join(templates_dir, "index.html"))
+            
+        if os.path.exists(os.path.join(backup_dir, "version.txt")):
+            shutil.copy(os.path.join(backup_dir, "version.txt"), os.path.join(BASE_DIR, "version.txt"))
+        
+        return jsonify({'status':'success', 'msg':'Ripristino completato! Riavvia il programma.'})
+    except Exception as e:
+        return jsonify({'status':'error', 'msg':str(e)})
 
 if __name__ == '__main__': 
     init_db()
