@@ -15,11 +15,10 @@ app = Flask(__name__)
 SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
 
-# PERCORSO ASSOLUTO (FONDAMENTALE PER I BACKUP)
+# PERCORSO ASSOLUTO (PER NON SBAGLIARE MAI CARTELLA)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
-# ⚠️ SOSTITUISCI CON IL TUO UTENTE GITHUB
 GITHUB_USER = "lucabecc" 
 GITHUB_REPO = f"https://raw.githubusercontent.com/{GITHUB_USER}/GestLav-updates/main/"
 
@@ -171,21 +170,26 @@ def get_listino_dict():
         listino_dict[cat][nome] = prezzo
     return listino_dict
 
-# --- CHIUSURA FISCALE ---
+# --- CHIUSURA FISCALE (DEBUGGATA) ---
 def esegui_chiusura_fiscale():
     ip = get_setting("ip_fiscal")
+    print(f"Tentativo chiusura fiscale su IP: {ip}") # DEBUG
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10)
+        s.settimeout(15) # AUMENTATO TIMEOUT A 15 SECONDI
         s.connect((ip, 9100))
         s.send(b"\x18")
         time.sleep(0.5)
         s.send(b"1F\r\n")
         time.sleep(1)
         s.close()
-        return True, "Chiusura Inviata!"
+        return True, "Chiusura Inviata con successo!"
+    except socket.timeout:
+        return False, f"Timeout! La stampante all'IP {ip} non risponde."
+    except ConnectionRefusedError:
+        return False, f"Connessione rifiutata dall'IP {ip}."
     except Exception as e:
-        return False, str(e)
+        return False, f"Errore generico: {str(e)}"
 
 # --- STAMPE (IBRIDA: COM vs WINDOWS) ---
 def stampa_etichette(num_visibile, carrello, cliente_nome, data_ritiro_str):
@@ -378,13 +382,19 @@ def api_get_settings():
     data = {row['chiave']: row['valore'] for row in cursor.fetchall()}
     conn.close()
     
-    # --- DEBUGGING PER IL TASTO RIPRISTINO ---
-    backup_path = os.path.join(BASE_DIR, "backup", "app.py")
-    esiste = os.path.exists(backup_path)
-    print(f"[DEBUG] Controllo backup in: {backup_path} -> ESISTE? {'SI' if esiste else 'NO'}")
+    # ⚠️ DEBUGGING PERFETTO: CONTROLLIAMO DOVE CERCA
+    backup_folder = os.path.join(BASE_DIR, "backup")
+    backup_file = os.path.join(backup_folder, "app.py")
+    esiste = os.path.exists(backup_file)
+    
+    print(f"\n--- DEBUG BACKUP ---")
+    print(f"Cartella Base: {BASE_DIR}")
+    print(f"Cartella Backup: {backup_folder}")
+    print(f"File atteso: {backup_file}")
+    print(f"Esiste? {'SI' if esiste else 'NO'}")
+    print(f"--------------------\n")
     
     data['has_backup'] = 1 if esiste else 0
-    
     return jsonify(data)
 
 @app.route('/api/save_settings', methods=['POST'])
@@ -764,7 +774,6 @@ def modifica_capo_ordine():
 @app.route('/api/check_update')
 def check_update():
     try:
-        # Percorso assoluto per versione locale
         v_file = os.path.join(BASE_DIR, "version.txt")
         with open(v_file, "r") as f:
             local_ver = f.read().strip()
@@ -773,7 +782,6 @@ def check_update():
         with urllib.request.urlopen(remote_url) as response:
             remote_ver = response.read().decode('utf-8').strip()
         
-        # Verifica backup con percorso assoluto
         backup_path = os.path.join(BASE_DIR, "backup", "app.py")
         has_backup = os.path.exists(backup_path)
         
@@ -789,7 +797,6 @@ def perform_update():
         backup_dir = os.path.join(BASE_DIR, "backup")
         templates_dir = os.path.join(BASE_DIR, "templates")
         
-        # 1. CREA BACKUP DEI FILE ATTUALI
         if not os.path.exists(backup_dir): os.makedirs(backup_dir)
         
         shutil.copy(os.path.join(BASE_DIR, "app.py"), os.path.join(backup_dir, "app.py"))
@@ -800,7 +807,6 @@ def perform_update():
         if os.path.exists(os.path.join(BASE_DIR, "version.txt")):
             shutil.copy(os.path.join(BASE_DIR, "version.txt"), os.path.join(backup_dir, "version.txt"))
         
-        # 2. SCARICA I NUOVI FILE
         urllib.request.urlretrieve(GITHUB_REPO + "app.py", os.path.join(BASE_DIR, "app.py"))
         
         if not os.path.exists(templates_dir): os.makedirs(templates_dir)
@@ -821,7 +827,6 @@ def restore_backup():
         if not os.path.exists(os.path.join(backup_dir, "app.py")): 
             return jsonify({'status':'error', 'msg':'Nessun backup trovato'})
         
-        # Ripristina i file
         shutil.copy(os.path.join(backup_dir, "app.py"), os.path.join(BASE_DIR, "app.py"))
         
         if os.path.exists(os.path.join(backup_dir, "index.html")):
