@@ -15,10 +15,11 @@ app = Flask(__name__)
 SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
 
-# CALCOLA LA POSIZIONE ESATTA DELLA CARTELLA DEL PROGRAMMA
+# PERCORSO ASSOLUTO (FONDAMENTALE PER I BACKUP)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
+# ⚠️ SOSTITUISCI CON IL TUO UTENTE GITHUB
 GITHUB_USER = "lucabecc" 
 GITHUB_REPO = f"https://raw.githubusercontent.com/{GITHUB_USER}/GestLav-updates/main/"
 
@@ -57,7 +58,6 @@ LISTINO_DEFAULT = [
 ]
 
 def get_db():
-    # USA PERCORSO ASSOLUTO PER IL DB
     db_path = os.path.join(BASE_DIR, DB_NAME)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -132,11 +132,11 @@ def init_db():
         
         conn.commit()
         conn.close()
-        
-    # Crea il file version.txt se non esiste (Percorso Assoluto)
-    version_path = os.path.join(BASE_DIR, "version.txt")
-    if not os.path.exists(version_path):
-        with open(version_path, "w") as f:
+    
+    # Crea version.txt se non c'è
+    ver_path = os.path.join(BASE_DIR, "version.txt")
+    if not os.path.exists(ver_path):
+        with open(ver_path, "w") as f:
             f.write("1.0")
 
 def get_setting(chiave):
@@ -378,9 +378,12 @@ def api_get_settings():
     data = {row['chiave']: row['valore'] for row in cursor.fetchall()}
     conn.close()
     
-    # ⚠️ CONTROLLO BACKUP CON PERCORSO ASSOLUTO SICURO
+    # --- DEBUGGING PER IL TASTO RIPRISTINO ---
     backup_path = os.path.join(BASE_DIR, "backup", "app.py")
-    data['has_backup'] = 1 if os.path.exists(backup_path) else 0
+    esiste = os.path.exists(backup_path)
+    print(f"[DEBUG] Controllo backup in: {backup_path} -> ESISTE? {'SI' if esiste else 'NO'}")
+    
+    data['has_backup'] = 1 if esiste else 0
     
     return jsonify(data)
 
@@ -757,11 +760,11 @@ def modifica_capo_ordine():
     conn.close()
     return jsonify({'status': 'success'})
 
-# --- SISTEMA AGGIORNAMENTO CON BACKUP ---
+# --- SISTEMA AGGIORNAMENTO CON BACKUP E DEBUG ---
 @app.route('/api/check_update')
 def check_update():
     try:
-        # Legge versione locale con percorso assoluto
+        # Percorso assoluto per versione locale
         v_file = os.path.join(BASE_DIR, "version.txt")
         with open(v_file, "r") as f:
             local_ver = f.read().strip()
@@ -770,7 +773,7 @@ def check_update():
         with urllib.request.urlopen(remote_url) as response:
             remote_ver = response.read().decode('utf-8').strip()
         
-        # Verifica se esiste un backup
+        # Verifica backup con percorso assoluto
         backup_path = os.path.join(BASE_DIR, "backup", "app.py")
         has_backup = os.path.exists(backup_path)
         
@@ -789,14 +792,11 @@ def perform_update():
         # 1. CREA BACKUP DEI FILE ATTUALI
         if not os.path.exists(backup_dir): os.makedirs(backup_dir)
         
-        # Salva app.py
         shutil.copy(os.path.join(BASE_DIR, "app.py"), os.path.join(backup_dir, "app.py"))
         
-        # Salva index.html
         if os.path.exists(os.path.join(templates_dir, "index.html")):
             shutil.copy(os.path.join(templates_dir, "index.html"), os.path.join(backup_dir, "index.html"))
             
-        # Salva version.txt
         if os.path.exists(os.path.join(BASE_DIR, "version.txt")):
             shutil.copy(os.path.join(BASE_DIR, "version.txt"), os.path.join(backup_dir, "version.txt"))
         
@@ -821,7 +821,7 @@ def restore_backup():
         if not os.path.exists(os.path.join(backup_dir, "app.py")): 
             return jsonify({'status':'error', 'msg':'Nessun backup trovato'})
         
-        # Ripristina i file dalla cartella backup
+        # Ripristina i file
         shutil.copy(os.path.join(backup_dir, "app.py"), os.path.join(BASE_DIR, "app.py"))
         
         if os.path.exists(os.path.join(backup_dir, "index.html")):
