@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WinLav - {{ sede }}</title>
+    <title>GestLav 2.0 - {{ sede }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -58,7 +58,7 @@
 <body>
 
 <div class="container mt-5" id="view-home">
-    <h1 class="text-center mb-4 text-primary fw-bold">LAVANDERIA {{ sede }}</h1>
+    <h1 class="text-center mb-4 text-primary fw-bold">GestLav 2.0 - {{ sede }}</h1>
     <div class="row g-4 mb-5">
         <div class="col-md-6"><button class="btn btn-ricezione w-100 big-btn" onclick="vaiRicezione()">📥 NUOVO</button></div>
         <div class="col-md-6"><button class="btn btn-consegna w-100 big-btn" onclick="vaiConsegna()">📤 RICONSEGNA</button></div>
@@ -236,6 +236,13 @@
                         <div class="mb-3"><label>IP Stampante Fiscale</label><input type="text" id="conf-ip" class="form-control"></div>
                     </div>
                     <div class="tab-pane fade" id="pills-general">
+                        <div class="alert alert-info">
+                            <h5 class="fw-bold"><i class="bi bi-cloud-arrow-down-fill"></i> Aggiornamento Software</h5>
+                            <p id="update-msg" class="mb-2">Verifica disponibilità aggiornamenti online.</p>
+                            <button class="btn btn-primary w-100" id="btn-check-update" onclick="checkUpdate()">☁️ CERCA AGGIORNAMENTI</button>
+                            <button class="btn btn-success w-100 mt-2 hidden" id="btn-do-update" onclick="performUpdate()">SCARICA E AGGIORNA</button>
+                        </div>
+                        <hr>
                         <div class="form-check form-switch mb-4">
                             <input class="form-check-input" type="checkbox" id="conf-fiscal-always">
                             <label class="form-check-label fw-bold">Stampa Fiscale SEMPRE (in ricezione)</label>
@@ -416,6 +423,56 @@
         new bootstrap.Modal(document.getElementById('modalImpostazioni')).show(); 
     }
     
+    // --- LOGICA AGGIORNAMENTO SOFTWARE ---
+    async function checkUpdate() {
+        const btn = document.getElementById('btn-check-update');
+        const msg = document.getElementById('update-msg');
+        const btnDo = document.getElementById('btn-do-update');
+        
+        btn.disabled = true;
+        btn.innerHTML = "⏳ Controllo in corso...";
+        
+        try {
+            const res = await fetch('/api/check_update');
+            const data = await res.json();
+            
+            if (data.update_available) {
+                msg.innerHTML = `📢 <strong>NUOVA VERSIONE DISPONIBILE!</strong><br>Tua versione: ${data.local} -> Nuova: ${data.remote}`;
+                msg.className = "alert alert-success";
+                btn.classList.add("hidden");
+                btnDo.classList.remove("hidden");
+            } else {
+                msg.innerHTML = "✅ Il software è aggiornato.";
+                msg.className = "alert alert-info";
+                btn.innerHTML = "☁️ CERCA AGGIORNAMENTI";
+                btn.disabled = false;
+            }
+        } catch (e) {
+            msg.innerHTML = "❌ Errore durante il controllo.";
+            msg.className = "alert alert-danger";
+            btn.disabled = false;
+        }
+    }
+
+    async function performUpdate() {
+        if(!confirm("Il software verrà aggiornato e riavviato. Continuare?")) return;
+        
+        const btnDo = document.getElementById('btn-do-update');
+        btnDo.disabled = true;
+        btnDo.innerHTML = "⏳ SCARICAMENTO IN CORSO...";
+        
+        const res = await fetch('/api/perform_update', {method:'POST'});
+        const data = await res.json();
+        
+        if (data.status === 'success') {
+            alert(data.msg);
+            location.reload();
+        } else {
+            alert("Errore aggiornamento: " + data.msg);
+            btnDo.disabled = false;
+        }
+    }
+
     function popolaFiltroCategorie() {
         const sel = document.getElementById('filtro-categoria');
         const dl = document.getElementById('datalistCategorie');

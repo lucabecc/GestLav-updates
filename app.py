@@ -6,12 +6,18 @@ import win32print
 import serial
 import socket 
 import time
+import urllib.request
 
 app = Flask(__name__)
 
 # --- CONFIGURAZIONE ---
 SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
+
+# --- CONFIGURAZIONE AGGIORNAMENTI ---
+# ⚠️ SOSTITUISCI 'TUO_NOME_UTENTE' QUI SOTTO CON IL TUO VERO UTENTE GITHUB!
+GITHUB_USER = "lucabecc" 
+GITHUB_REPO = f"https://raw.githubusercontent.com/{GITHUB_USER}/GestLav-updates/main/"
 
 FESTIVITA = [
     "01-01", "06-01", "25-04", "01-05", "02-06", "15-08", "01-11", "08-12", "25-12", "26-12",
@@ -120,6 +126,11 @@ def init_db():
         
         conn.commit()
         conn.close()
+        
+    # Crea il file version.txt se non esiste
+    if not os.path.exists("version.txt"):
+        with open("version.txt", "w") as f:
+            f.write("1.0")
 
 def get_setting(chiave):
     conn = get_db()
@@ -649,6 +660,42 @@ def modifica_capo_ordine():
     conn.commit()
     conn.close()
     return jsonify({'status': 'success'})
+
+# --- ROTTA AGGIORNAMENTO SOFTWARE (PER IL FUTURO) ---
+@app.route('/api/check_update')
+def check_update():
+    try:
+        # Legge versione locale
+        with open("version.txt", "r") as f:
+            local_ver = f.read().strip()
+        
+        # Legge versione remota da GitHub
+        remote_url = GITHUB_REPO + "version.txt"
+        with urllib.request.urlopen(remote_url) as response:
+            remote_ver = response.read().decode('utf-8').strip()
+            
+        if remote_ver != local_ver:
+            return jsonify({'update_available': True, 'local': local_ver, 'remote': remote_ver})
+        return jsonify({'update_available': False})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/api/perform_update', methods=['POST'])
+def perform_update():
+    try:
+        # Scarica app.py
+        urllib.request.urlretrieve(GITHUB_REPO + "app.py", "app.py")
+        
+        # Scarica index.html (attenzione al percorso templates)
+        if not os.path.exists("templates"): os.makedirs("templates")
+        urllib.request.urlretrieve(GITHUB_REPO + "templates/index.html", "templates/index.html")
+        
+        # Scarica versione
+        urllib.request.urlretrieve(GITHUB_REPO + "version.txt", "version.txt")
+        
+        return jsonify({'status': 'success', 'msg': 'Aggiornamento completato! Riavvia il programma.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 if __name__ == '__main__': 
     init_db()
