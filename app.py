@@ -14,7 +14,9 @@ app = Flask(__name__)
 # --- CONFIGURAZIONE ---
 SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Cartella corrente sicura
+
+# CALCOLA LA POSIZIONE ESATTA DELLA CARTELLA DEL PROGRAMMA
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
 GITHUB_USER = "lucabecc" 
@@ -55,12 +57,15 @@ LISTINO_DEFAULT = [
 ]
 
 def get_db():
-    conn = sqlite3.connect(os.path.join(BASE_DIR, DB_NAME))
+    # USA PERCORSO ASSOLUTO PER IL DB
+    db_path = os.path.join(BASE_DIR, DB_NAME)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    if not os.path.exists(os.path.join(BASE_DIR, DB_NAME)):
+    db_path = os.path.join(BASE_DIR, DB_NAME)
+    if not os.path.exists(db_path):
         conn = get_db()
         cursor = conn.cursor()
         
@@ -128,9 +133,10 @@ def init_db():
         conn.commit()
         conn.close()
         
-    v_file = os.path.join(BASE_DIR, "version.txt")
-    if not os.path.exists(v_file):
-        with open(v_file, "w") as f:
+    # Crea il file version.txt se non esiste (Percorso Assoluto)
+    version_path = os.path.join(BASE_DIR, "version.txt")
+    if not os.path.exists(version_path):
+        with open(version_path, "w") as f:
             f.write("1.0")
 
 def get_setting(chiave):
@@ -372,9 +378,9 @@ def api_get_settings():
     data = {row['chiave']: row['valore'] for row in cursor.fetchall()}
     conn.close()
     
-    # ⚠️ FIX: Controlla cartella backup nel percorso assoluto
-    backup_file = os.path.join(BASE_DIR, "backup", "app.py")
-    data['has_backup'] = 1 if os.path.exists(backup_file) else 0
+    # ⚠️ CONTROLLO BACKUP CON PERCORSO ASSOLUTO SICURO
+    backup_path = os.path.join(BASE_DIR, "backup", "app.py")
+    data['has_backup'] = 1 if os.path.exists(backup_path) else 0
     
     return jsonify(data)
 
@@ -783,11 +789,14 @@ def perform_update():
         # 1. CREA BACKUP DEI FILE ATTUALI
         if not os.path.exists(backup_dir): os.makedirs(backup_dir)
         
+        # Salva app.py
         shutil.copy(os.path.join(BASE_DIR, "app.py"), os.path.join(backup_dir, "app.py"))
         
+        # Salva index.html
         if os.path.exists(os.path.join(templates_dir, "index.html")):
             shutil.copy(os.path.join(templates_dir, "index.html"), os.path.join(backup_dir, "index.html"))
             
+        # Salva version.txt
         if os.path.exists(os.path.join(BASE_DIR, "version.txt")):
             shutil.copy(os.path.join(BASE_DIR, "version.txt"), os.path.join(backup_dir, "version.txt"))
         
