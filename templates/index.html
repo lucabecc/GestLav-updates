@@ -234,6 +234,67 @@
                             <small class="text-muted">Usa "COMx" per vecchie seriali, oppure seleziona il nome Windows.</small>
                         </div>
                         <div class="mb-3"><label>IP Stampante Fiscale</label><input type="text" id="conf-ip" class="form-control"></div>
+
+                        <hr>
+                        <h5 class="text-primary"><i class="bi bi-receipt"></i> Personalizzazione Scontrino</h5>
+                        <div class="card p-3 bg-light mb-3">
+                            <div class="mb-2">
+                                <label class="fw-bold">Intestazione (Header)</label>
+                                <textarea id="conf-header" class="form-control" rows="3"></textarea>
+                                <select id="conf-size-header" class="form-select mt-1"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                            </div>
+                            
+                            <div class="row g-2 mb-2">
+                                <div class="col-4">
+                                    <label class="small fw-bold">Num. Scontrino</label>
+                                    <select id="conf-size-num" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                                </div>
+                                <div class="col-4">
+                                    <label class="small fw-bold">Nome Cliente</label>
+                                    <select id="conf-size-cust" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                                </div>
+                                <div class="col-4">
+                                    <label class="small fw-bold">Lista Capi</label>
+                                    <select id="conf-size-item" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                                </div>
+                            </div>
+                            
+                             <div class="row g-2 mb-2">
+                                <div class="col-6">
+                                    <label class="small fw-bold">Totale €</label>
+                                    <select id="conf-size-total" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                                </div>
+                            </div>
+
+                            <div class="mb-2">
+                                <label class="fw-bold">Piè di pagina (Footer)</label>
+                                <textarea id="conf-footer" class="form-control" rows="2"></textarea>
+                                <select id="conf-size-footer" class="form-select mt-1"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                            </div>
+                            
+                            <div class="form-check form-switch mt-2">
+                                <input class="form-check-input" type="checkbox" id="conf-print-logo">
+                                <label class="form-check-label fw-bold">Stampa Logo (NVRAM)</label>
+                            </div>
+
+                            <button class="btn btn-outline-primary w-100 mt-2" onclick="testStampa('scontrino')">🖨️ TEST SCONTRINO</button>
+                        </div>
+
+                        <h5 class="text-primary"><i class="bi bi-tags-fill"></i> Personalizzazione Etichette</h5>
+                        <div class="card p-3 bg-light">
+                            <div class="mb-2">
+                                <label class="fw-bold">Intestazione Etichetta</label>
+                                <input type="text" id="conf-label-text" class="form-control" placeholder="Es: LAV. FALCONARA">
+                                <select id="conf-size-label-h" class="form-select mt-1"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="fw-bold">Dimensione Testo Dati</label>
+                                <select id="conf-size-label-b" class="form-select"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select>
+                            </div>
+
+                            <button class="btn btn-outline-warning w-100 mt-2" onclick="testStampa('etichetta')">🏷️ TEST ETICHETTA</button>
+                        </div>
+
                     </div>
                     <div class="tab-pane fade" id="pills-general">
                         <div class="alert alert-info">
@@ -392,15 +453,33 @@
         const res=await fetch('/api/get_settings'); 
         const d=await res.json(); 
         
-        // --- MOSTRA TASTO RIPRISTINO SENZA CONTROLLI DI TIPO ---
+        // MOSTRA TASTO RIPRISTINO
         const btnRestore = document.getElementById('btn-restore');
-        console.log("Valore backup ricevuto:", d.has_backup); // DEBUG NELLA CONSOLE BROWSER (F12)
+        console.log("Valore backup ricevuto:", d.has_backup); 
         
         if (d.has_backup) {
-            btnRestore.style.display = 'block'; // Forza visibilità
+            btnRestore.style.display = 'block'; 
         } else {
             btnRestore.style.display = 'none';
         }
+
+        // CARICA VALORI STAMPA
+        document.getElementById('conf-header').value = d.ticket_header || '';
+        document.getElementById('conf-footer').value = d.ticket_footer || '';
+        document.getElementById('conf-print-logo').checked = (d.print_logo == '1');
+        
+        // Nuovi selettori scontrino
+        document.getElementById('conf-size-header').value = d.font_header || 'wide';
+        document.getElementById('conf-size-num').value = d.font_num || 'big';
+        document.getElementById('conf-size-cust').value = d.font_customer || 'big';
+        document.getElementById('conf-size-item').value = d.font_items || 'norm';
+        document.getElementById('conf-size-total').value = d.font_total || 'huge'; // DEFAULT HUGE
+        document.getElementById('conf-size-footer').value = d.font_footer || 'norm';
+
+        // Nuovi selettori etichetta
+        document.getElementById('conf-label-text').value = d.label_custom_text || '';
+        document.getElementById('conf-size-label-h').value = d.font_label_header || 'wide';
+        document.getElementById('conf-size-label-b').value = d.font_label_data || 'big';
         
         // Rileva stampanti sistema
         const savedPrinter = d.printer_star || '';
@@ -435,6 +514,43 @@
         new bootstrap.Modal(document.getElementById('modalImpostazioni')).show(); 
     }
     
+    async function testStampa(tipo) {
+        await salvaImpostazioniSenzaReload();
+        const res = await fetch('/api/test_print', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({tipo: tipo})
+        });
+        const data = await res.json();
+        if(data.status === 'success') {
+            alert('Test inviato alla stampante!');
+        } else {
+            alert('Errore test: ' + data.msg);
+        }
+    }
+
+    async function salvaImpostazioniSenzaReload() {
+        const dati={
+            printer_star: document.getElementById('conf-star').value, 
+            port_labels: document.getElementById('conf-labels').value, 
+            ip_fiscal: document.getElementById('conf-ip').value, 
+            fiscal_always: document.getElementById('conf-fiscal-always').checked?"1":"0",
+            ticket_header: document.getElementById('conf-header').value,
+            ticket_footer: document.getElementById('conf-footer').value,
+            print_logo: document.getElementById('conf-print-logo').checked ? "1" : "0",
+            font_header: document.getElementById('conf-size-header').value,
+            font_num: document.getElementById('conf-size-num').value,
+            font_customer: document.getElementById('conf-size-cust').value,
+            font_items: document.getElementById('conf-size-item').value,
+            font_total: document.getElementById('conf-size-total').value, // SALVA TOTALE
+            font_footer: document.getElementById('conf-size-footer').value,
+            label_custom_text: document.getElementById('conf-label-text').value,
+            font_label_header: document.getElementById('conf-size-label-h').value,
+            font_label_data: document.getElementById('conf-size-label-b').value
+        }; 
+        await fetch('/api/save_settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dati)}); 
+    }
+    
     // --- LOGICA AGGIORNAMENTO SOFTWARE E RIPRISTINO ---
     async function checkUpdate() {
         const btn = document.getElementById('btn-check-update');
@@ -449,7 +565,6 @@
             const res = await fetch('/api/check_update');
             const data = await res.json();
             
-            // Aggiorna stato backup anche qui
             if (data.has_backup) {
                 btnRestore.style.display = 'block';
             }
@@ -542,7 +657,31 @@
 
     async function eliminaCapoListino(id) { if(!confirm("Eliminare definitivamente?")) return; await fetch('/api/delete_item_listino', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})}); apriImpostazioni(); }
 
-    async function salvaImpostazioni() { const dati={printer_star:document.getElementById('conf-star').value, port_labels:document.getElementById('conf-labels').value, ip_fiscal:document.getElementById('conf-ip').value, fiscal_always:document.getElementById('conf-fiscal-always').checked?"1":"0"}; await fetch('/api/save_settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dati)}); alert("Salvato!"); bootstrap.Modal.getInstance(document.getElementById('modalImpostazioni')).hide(); location.reload(); }
+    async function salvaImpostazioni() { 
+        const dati={
+            printer_star: document.getElementById('conf-star').value, 
+            port_labels: document.getElementById('conf-labels').value, 
+            ip_fiscal: document.getElementById('conf-ip').value, 
+            fiscal_always: document.getElementById('conf-fiscal-always').checked?"1":"0",
+            ticket_header: document.getElementById('conf-header').value,
+            ticket_footer: document.getElementById('conf-footer').value,
+            print_logo: document.getElementById('conf-print-logo').checked ? "1" : "0",
+            size_header: document.getElementById('conf-size-header').value,
+            size_num_scontrino: document.getElementById('conf-size-num').value,
+            size_customer: document.getElementById('conf-size-cust').value,
+            size_items: document.getElementById('conf-size-item').value,
+            size_footer: document.getElementById('conf-size-footer').value,
+            label_custom_text: document.getElementById('conf-label-text').value,
+            size_label_header: document.getElementById('conf-size-label-h').value,
+            size_label_body: document.getElementById('conf-size-label-b').value
+        }; 
+        
+        await fetch('/api/save_settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dati)}); 
+        alert("Salvato!"); 
+        bootstrap.Modal.getInstance(document.getElementById('modalImpostazioni')).hide(); 
+        location.reload(); 
+    }
+    
     async function resetContatori() { if(confirm("AZZERARE SCONTRINI?")) { await fetch('/api/reset_counters',{method:'POST'}); alert("Fatto!"); bootstrap.Modal.getInstance(document.getElementById('modalImpostazioni')).hide(); } }
     async function chiusuraFiscale() { if(confirm("CHIUSURA FISCALE?")) { const res=await fetch('/esegui_chiusura',{method:'POST'}); alert((await res.json()).msg); } }
     

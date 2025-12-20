@@ -10,14 +10,15 @@ import urllib.request
 import urllib.error
 import shutil 
 
-app = Flask(__name__)
+# --- CONFIGURAZIONE PERCORSI ASSOLUTI ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
+
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
 # --- CONFIGURAZIONE ---
 SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
-
-# PERCORSO ASSOLUTO (PER NON SBAGLIARE MAI CARTELLA)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
 GITHUB_USER = "lucabecc" 
@@ -28,32 +29,19 @@ FESTIVITA = [
     "2025-08-10", "2025-08-11", "2025-08-12" 
 ]
 
-# LISTINO BASE
 LISTINO_DEFAULT = [
-    ("ABBIGLIAMENTO", "Camicia", 5.00),
-    ("ABBIGLIAMENTO", "Pantalone", 7.00),
-    ("ABBIGLIAMENTO", "Giacca", 10.00),
-    ("ABBIGLIAMENTO", "Completo Uomo", 17.00),
-    ("ABBIGLIAMENTO", "Gonna", 6.00),
-    ("ABBIGLIAMENTO", "Cappotto", 15.00),
-    ("ABBIGLIAMENTO", "Impermeabile", 16.00),
-    ("ABBIGLIAMENTO", "Maglione", 6.00),
-    ("CASA & LETTO", "Piumone Singolo", 25.00),
-    ("CASA & LETTO", "Piumone Matrim.", 30.00),
-    ("CASA & LETTO", "Trapunta Sing.", 22.00),
-    ("CASA & LETTO", "Trapunta Matr.", 28.00),
-    ("CASA & LETTO", "Copriletto", 15.00),
-    ("CASA & LETTO", "Lenzuolo", 4.00),
-    ("CASA & LETTO", "Federa", 2.00),
-    ("CASA & LETTO", "Tappeto (al kg)", 7.00),
-    ("LAVORO", "Tuta da Lavoro", 9.00),
-    ("LAVORO", "Giacca Lavoro", 8.00),
-    ("LAVORO", "Pantalone Lavoro", 7.00),
-    ("LAVORO", "Camice Medico", 6.00),
-    ("PRODOTTI VENDITA", "Detersivo sfuso", 3.50),
-    ("PRODOTTI VENDITA", "Ammorbidente", 4.00),
-    ("PRODOTTI VENDITA", "Profumatore", 6.00),
-    ("PRODOTTI VENDITA", "Grucce (10pz)", 2.50),
+    ("ABBIGLIAMENTO", "Camicia", 5.00), ("ABBIGLIAMENTO", "Pantalone", 7.00),
+    ("ABBIGLIAMENTO", "Giacca", 10.00), ("ABBIGLIAMENTO", "Completo Uomo", 17.00),
+    ("ABBIGLIAMENTO", "Gonna", 6.00), ("ABBIGLIAMENTO", "Cappotto", 15.00),
+    ("ABBIGLIAMENTO", "Impermeabile", 16.00), ("ABBIGLIAMENTO", "Maglione", 6.00),
+    ("CASA & LETTO", "Piumone Singolo", 25.00), ("CASA & LETTO", "Piumone Matrim.", 30.00),
+    ("CASA & LETTO", "Trapunta Sing.", 22.00), ("CASA & LETTO", "Trapunta Matr.", 28.00),
+    ("CASA & LETTO", "Copriletto", 15.00), ("CASA & LETTO", "Lenzuolo", 4.00),
+    ("CASA & LETTO", "Federa", 2.00), ("CASA & LETTO", "Tappeto (al kg)", 7.00),
+    ("LAVORO", "Tuta da Lavoro", 9.00), ("LAVORO", "Giacca Lavoro", 8.00),
+    ("LAVORO", "Pantalone Lavoro", 7.00), ("LAVORO", "Camice Medico", 6.00),
+    ("PRODOTTI VENDITA", "Detersivo sfuso", 3.50), ("PRODOTTI VENDITA", "Ammorbidente", 4.00),
+    ("PRODOTTI VENDITA", "Profumatore", 6.00), ("PRODOTTI VENDITA", "Grucce (10pz)", 2.50),
     ("PRODOTTI VENDITA", "Sacchi Custodia", 1.00)
 ]
 
@@ -66,258 +54,235 @@ def get_db():
 def init_db():
     db_path = os.path.join(BASE_DIR, DB_NAME)
     if not os.path.exists(db_path):
-        conn = get_db()
-        cursor = conn.cursor()
+        conn = get_db(); cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT, telefono TEXT, indirizzo TEXT, citta TEXT, cap TEXT, data_nascita TEXT, note TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS dettagli_ordine (id INTEGER PRIMARY KEY AUTOINCREMENT, ordine_id INTEGER, capo TEXT, prezzo REAL, ritirato INTEGER DEFAULT 0, stato_lavorazione INTEGER DEFAULT 0, numero_catena TEXT DEFAULT '')''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
         
-        cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            nome TEXT NOT NULL, 
-            cognome TEXT, 
-            telefono TEXT, 
-            indirizzo TEXT, 
-            citta TEXT, 
-            cap TEXT, 
-            data_nascita TEXT, 
-            note TEXT)''')
-            
-        cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            num_scontrino INTEGER, 
-            cliente_id INTEGER, 
-            data_ingresso TIMESTAMP, 
-            data_ritiro TEXT, 
-            totale REAL, 
-            sconto REAL DEFAULT 0, 
-            pagato INTEGER DEFAULT 0, 
-            acconto REAL DEFAULT 0, 
-            fiscale_emesso INTEGER DEFAULT 0, 
-            fiscale_desk INTEGER DEFAULT 0, 
-            metodo_pagamento TEXT, 
-            stato TEXT DEFAULT 'In Lavorazione', 
-            sede TEXT)''')
-            
-        cursor.execute('''CREATE TABLE IF NOT EXISTS dettagli_ordine (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            ordine_id INTEGER, 
-            capo TEXT, 
-            prezzo REAL, 
-            ritirato INTEGER DEFAULT 0, 
-            stato_lavorazione INTEGER DEFAULT 0, 
-            numero_catena TEXT DEFAULT '')''')
-            
-        cursor.execute('''CREATE TABLE IF NOT EXISTS settings (
-            chiave TEXT PRIMARY KEY, 
-            valore TEXT)''')
-            
-        cursor.execute('''CREATE TABLE IF NOT EXISTS listino (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            categoria TEXT, 
-            capo TEXT, 
-            prezzo REAL)''')
-        
+        # PARAMETRI DI DEFAULT PERFETTI
         defaults = [
-            ("printer_star", "Star TSP100 Cutter (TSP143)"), 
-            ("port_labels", "COM1"), 
-            ("ip_fiscal", "192.168.1.8"), 
-            ("fiscal_always", "0"), 
-            ("last_reset_date", "2000-01-01 00:00:00")
+            ("printer_star", "Star TSP100 Cutter (TSP143)"), ("port_labels", "COM1"), ("ip_fiscal", "192.168.1.8"), 
+            ("fiscal_always", "0"), ("last_reset_date", "2000-01-01 00:00:00"),
+            ("ticket_header", f"LAVANDERIA\n{SEDE}\nVia Roma, 10 - Tel. 071.xxxxx"),
+            ("ticket_footer", "Grazie e Arrivederci!"),
+            ("print_logo", "0"),
+            ("label_custom_text", SEDE),
+            
+            # IMPOSTAZIONI GRAFICHE SCONTRINO (Star Line Mode)
+            # norm=1x, wide=2xW, high=2xH, big=2x2, huge=3x3
+            ("font_header", "wide"),       
+            ("font_num", "big"),           # Scontrino Gigante (2x2)
+            ("font_customer", "big"),      # Cliente Gigante (2x2)
+            ("font_items", "norm"),        
+            ("font_total", "huge"),        # TOTALE SUPER GIGANTE (3x3)
+            ("font_footer", "norm"),       
+            
+            ("font_label_header", "wide"),
+            ("font_label_data", "big")
         ]
         cursor.executemany("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", defaults)
-        
         cursor.execute("INSERT OR IGNORE INTO clienti (id, nome, cognome, telefono, citta) VALUES (1, 'CLIENTE', 'AL BANCO', '', '')")
-        
         cursor.execute("SELECT COUNT(*) FROM listino")
-        if cursor.fetchone()[0] == 0:
-            cursor.executemany("INSERT INTO listino (categoria, capo, prezzo) VALUES (?, ?, ?)", LISTINO_DEFAULT)
-        
-        conn.commit()
-        conn.close()
+        if cursor.fetchone()[0] == 0: cursor.executemany("INSERT INTO listino (categoria, capo, prezzo) VALUES (?, ?, ?)", LISTINO_DEFAULT)
+        conn.commit(); conn.close()
     
     ver_path = os.path.join(BASE_DIR, "version.txt")
     if not os.path.exists(ver_path):
-        with open(ver_path, "w") as f:
-            f.write("1.0")
+        with open(ver_path, "w") as f: f.write("1.0")
 
 def get_setting(chiave):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT valore FROM settings WHERE chiave = ?", (chiave,))
-    res = cursor.fetchone()
-    conn.close()
+    conn = get_db(); cursor = conn.cursor()
+    cursor.execute("SELECT valore FROM settings WHERE chiave = ?", (chiave,)); res = cursor.fetchone(); conn.close()
     return res['valore'] if res else ""
 
 def set_setting(chiave, valore):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (chiave, valore) VALUES (?, ?)", (chiave, valore))
-    conn.commit()
-    conn.close()
+    conn = get_db(); cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (chiave, valore) VALUES (?, ?)", (chiave, valore)); conn.commit(); conn.close()
 
 def get_listino_dict():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM listino ORDER BY categoria, capo")
-    rows = cursor.fetchall()
-    conn.close()
-    
+    conn = get_db(); cursor = conn.cursor(); cursor.execute("SELECT * FROM listino ORDER BY categoria, capo"); rows = cursor.fetchall(); conn.close()
     listino_dict = {}
     for row in rows:
-        cat = row['categoria']
-        nome = row['capo']
-        prezzo = row['prezzo']
-        if cat not in listino_dict:
-            listino_dict[cat] = {}
-        listino_dict[cat][nome] = prezzo
+        if row['categoria'] not in listino_dict: listino_dict[row['categoria']] = {}
+        listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
-# --- CHIUSURA FISCALE (AGGIORNATA) ---
 def esegui_chiusura_fiscale():
-    ip = get_setting("ip_fiscal")
-    print(f"Tentativo chiusura fiscale su IP: {ip}")
+    ip = get_setting("ip_fiscal"); print(f"Tentativo chiusura fiscale su IP: {ip}")
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10) # 10 secondi timeout
-        s.connect((ip, 9100))
-        
-        # Sequenza di pulizia e chiusura più robusta
-        s.send(b"\x18") # Clear buffer
-        time.sleep(1)   # Aspetta 1 secondo pieno
-        s.send(b"1F\r\n") # Comando Chiusura
-        time.sleep(2)   # Aspetta che la stampante elabori
-        
-        s.close()
-        return True, "Chiusura Inviata! Controlla la stampante."
-    except socket.timeout:
-        return False, f"Timeout! La stampante all'IP {ip} non risponde. È accesa?"
-    except ConnectionRefusedError:
-        return False, f"Connessione rifiutata dall'IP {ip}."
-    except Exception as e:
-        return False, f"Errore generico: {str(e)}"
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(10); s.connect((ip, 9100))
+        s.send(b"\x18"); time.sleep(1); s.send(b"1F\r\n"); time.sleep(2); s.close()
+        return True, "Chiusura Inviata!"
+    except Exception as e: return False, f"Errore: {str(e)}"
 
-# --- STAMPE (IBRIDA: COM vs WINDOWS) ---
+# --- HELPER PER COMANDI STAR ---
+def get_star_font(size_name):
+    # Mapping preciso per Star Line Mode
+    # ESC W n (Larghezza), ESC h n (Altezza)
+    if size_name == "huge": return b'\x1bW\x02\x1bh\x02' # 3x3 (SUPER GIGANTE)
+    if size_name == "big":  return b'\x1bW\x01\x1bh\x01' # 2x2 (Gigante)
+    if size_name == "wide": return b'\x1bW\x01\x1bh\x00' # 2x1 (Largo)
+    if size_name == "high": return b'\x1bW\x00\x1bh\x01' # 1x2 (Alto)
+    return b'\x1bW\x00\x1bh\x00' # 1x1 (Normale)
+
+# --- STAMPE ETICHETTE ---
 def stampa_etichette(num_visibile, carrello, cliente_nome, data_ritiro_str):
-    porta_o_stampante = get_setting("port_labels")
-    
+    porta = get_setting("port_labels")
+    custom_text = get_setting("label_custom_text")
     listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
     capi = [x for x in carrello if x['nome'] not in listino_vendita]
     tot = len(capi)
+    if tot == 0: return True
     
-    if tot == 0:
+    # Font Etichetta da DB
+    F_HEAD = get_star_font(get_setting("font_label_header"))
+    F_DATA = get_star_font(get_setting("font_label_data"))
+    F_NORM = get_star_font("norm")
+    
+    CUT = b'\x1bd\x02' # Star Cut
+    
+    try:
+        def enc(t): return t.encode('cp858', errors='replace')
+        
+        if porta.upper().startswith("COM"):
+            h = serial.Serial(porta, 9600, timeout=1); 
+            def write(b): h.write(b)
+            def close(): h.close()
+        else:
+            h = win32print.OpenPrinter(porta)
+            job = win32print.StartDocPrinter(h, 1, ("Etichette", None, "RAW")); win32print.StartPagePrinter(h)
+            def write(b): win32print.WritePrinter(h, b)
+            def close(): win32print.EndPagePrinter(h); win32print.EndDocPrinter(h); win32print.ClosePrinter(h)
+
+        write(b'\x1b@') # Init
+        write(b'\x1b\x1d\x74\x04') # PC858
+
+        i = 1
+        for item in capi:
+            if custom_text: write(F_HEAD + enc(f"{custom_text}\n"))
+            write(F_NORM + enc(f"ORD:{num_visibile} R:{data_ritiro_str}\n"))
+            write(F_DATA + enc(f"{cliente_nome[:12].upper()}\n"))
+            write(F_NORM + enc(f"{i}/{tot} {item['nome'][:12]}\n"))
+            write(CUT)
+            i += 1  
+        close()
         return True
+    except: return False
 
-    if porta_o_stampante.upper().startswith("COM"):
-        try:
-            ser = serial.Serial(porta_o_stampante, 9600, timeout=1)
-            ESC = b'\x1b'
-            CUT = b'\x1d' + b'V' + b'\x42' + b'\x00'
-            TXT_BIG = b'\x1b' + b'!' + b'\x31'
-            ser.write(ESC + b'@')
-            i = 1
-            for item in capi:
-                testo = TXT_BIG + f"ORD:{num_visibile} R:{data_ritiro_str}\n".encode() + f"{cliente_nome[:12].upper()}\n".encode() + f"{i}/{tot} {item['nome'][:12]}\n".encode() + CUT
-                ser.write(testo)
-                i += 1  
-            ser.close()
-            return True
-        except:
-            return False
-    else:
-        try:
-            hPrinter = win32print.OpenPrinter(porta_o_stampante)
-            try:
-                hJob = win32print.StartDocPrinter(hPrinter, 1, ("Etichette", None, "RAW"))
-                win32print.StartPagePrinter(hPrinter)
-                
-                ESC = b'\x1b'
-                CUT = b'\x1d' + b'V' + b'\x42' + b'\x00'
-                TXT_BIG = b'\x1b' + b'!' + b'\x31'
-                
-                win32print.WritePrinter(hPrinter, ESC + b'@')
-                i = 1
-                for item in capi:
-                    testo = TXT_BIG + f"ORD:{num_visibile} R:{data_ritiro_str}\n".encode() + f"{cliente_nome[:12].upper()}\n".encode() + f"{i}/{tot} {item['nome'][:12]}\n".encode() + CUT
-                    win32print.WritePrinter(hPrinter, testo)
-                    i += 1  
-                
-                win32print.EndPagePrinter(hPrinter)
-                win32print.EndDocPrinter(hPrinter)
-            finally:
-                win32print.ClosePrinter(hPrinter)
-            return True
-        except:
-            return False
-
+# --- STAMPA SCONTRINO (DINAMICA + EURO FIX) ---
 def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo):
     stampante = get_setting("printer_star")
+    header_text = get_setting("ticket_header")
+    footer_text = get_setting("ticket_footer")
+    print_logo = get_setting("print_logo") == "1"
+    
+    # Legge le grandezze dal DB (o usa i default se non settate)
+    S_HEAD = get_star_font(get_setting("font_header") or "wide")
+    S_NUM  = get_star_font(get_setting("font_num") or "big")
+    S_CUST = get_star_font(get_setting("font_customer") or "big")
+    S_ITEM = get_star_font(get_setting("font_items") or "norm")
+    S_TOT  = get_star_font(get_setting("font_total") or "huge") # 3x Default
+    S_FOOT = get_star_font(get_setting("font_footer") or "norm")
+    
+    S_NORM = get_star_font("norm")
+    S_WIDE = get_star_font("wide")
+
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
-            hJob = win32print.StartDocPrinter(hPrinter, 1, ("Scontrino", None, "RAW"))
-            win32print.StartPagePrinter(hPrinter)
+            hJob = win32print.StartDocPrinter(hPrinter, 1, ("Scontrino", None, "RAW")); win32print.StartPagePrinter(hPrinter)
             
-            ESC = b'\x1b'
-            CUT = b'\x1b' + b'd' + b'\x02'
-            BOLD_ON = b'\x1b' + b'E' + b'\x01'
-            BOLD_OFF = b'\x1b' + b'E' + b'\x00'
-            ALIGN_CENTER = b'\x1b' + b'a' + b'\x01'
-            ALIGN_LEFT = b'\x1b' + b'a' + b'\x00'
+            ALIGN_CENTER = b'\x1b\x1d\x61\x01'
+            ALIGN_LEFT   = b'\x1b\x1d\x61\x00'
+            BOLD_ON = b'\x1bE' 
+            BOLD_OFF = b'\x1bF'
+            CUT = b'\x1bd\x02'
+            CMD_LOGO = b'\x1b\x1c\x70\x01\x00\r\n' 
             
-            def l(txt): return txt.encode() + b"\n"
-            def c(txt): return ALIGN_CENTER + txt.encode() + b"\n" + ALIGN_LEFT
+            # --- FIX EURO ---
+            CMD_CP858 = b'\x1b\x1d\x74\x04' 
+            EURO = b'\xd5' # Codice esadecimale Euro in PC858
             
-            testo = c("LAVANDERIA") + c(SEDE) + c("Via Roma, 10 - Tel. 071.xxxxx") + l("-" * 42)
-            testo += l(f"Scontrino N.: {num_visibile}") + l(f"Data: {data}") + l(f"Cliente: {cliente_nome[:25]}") + l("-" * 42)
+            def enc(txt): return txt.encode('cp858', errors='replace')
+
+            buffer = b'\x1b@' + CMD_CP858 
             
+            # 1. LOGO
+            if print_logo: buffer += ALIGN_CENTER + CMD_LOGO + ALIGN_LEFT
+            
+            # 2. INTESTAZIONE
+            buffer += ALIGN_CENTER + S_HEAD + BOLD_ON
+            if header_text:
+                for r in header_text.split('\n'): buffer += enc(r) + b"\n"
+            buffer += BOLD_OFF + S_NORM + ALIGN_LEFT
+            
+            buffer += b"-" * 42 + b"\n"
+            
+            # 3. NUMERO SCONTRINO (SOLO NUMERO, NO #)
+            buffer += ALIGN_CENTER
+            buffer += S_NUM + BOLD_ON + enc(f"{num_visibile}\n") + BOLD_OFF + S_NORM
+            buffer += enc(f"Data: {data}\n")
+            buffer += ALIGN_LEFT
+            
+            # 4. NOME CLIENTE
+            buffer += ALIGN_CENTER + S_CUST + BOLD_ON + enc(f"{cliente_nome[:20]}\n") + BOLD_OFF + S_NORM + ALIGN_LEFT
+            
+            buffer += b"-" * 42 + b"\n"
+            
+            # 5. LISTA CAPI
+            buffer += S_ITEM
+            num_capi_tot = 0
             for item in carrello:
+                num_capi_tot += 1
                 nome = item['nome'][:25]
                 prezzo = f"{item['prezzo']:.2f}"
-                spazi = " " * (38 - len(nome) - len(prezzo))
-                testo += (f"{nome}{spazi}{prezzo}E").encode() + b"\n"
+                spazi = " " * (38 - len(nome) - len(prezzo) - 1)
+                buffer += enc(f"{nome}{spazi}{prezzo}") + EURO + b"\n"
             
-            testo += l("-" * 42)
+            buffer += S_NORM + b"-" * 42 + b"\n"
             
-            if sconto > 0:
-                testo += l(f"SCONTO APPLICATO: -{sconto:.2f} E")
+            # 6. TOTALI 
+            if sconto > 0: buffer += enc(f"SCONTO APPLICATO: -{sconto:.2f}") + EURO + b"\n"
             
-            testo += BOLD_ON + c(f"TOTALE: {totale:.2f} E")
+            buffer += ALIGN_CENTER 
             
+            # Numero Capi (Sopra il totale)
+            buffer += S_WIDE + enc(f"N. Capi: {num_capi_tot}\n")
+            
+            # Totale SUPER GIGANTE (3x)
+            buffer += S_TOT + BOLD_ON + enc(f"TOT: {totale:.2f}") + EURO + b"\n" + BOLD_OFF 
+            
+            # DA PAGARE Sotto
+            buffer += S_WIDE + b"DA PAGARE\n" + S_NORM
+            buffer += ALIGN_LEFT
+            
+            # Acconti e residui
             if acconto > 0:
                 residuo = max(0, totale - acconto)
-                testo += l(f"ACCONTO: {acconto:.2f} E ({metodo})")
-                if residuo > 0:
-                    testo += c(f"DA SALDARE: {residuo:.2f} E")
-                else:
-                    testo += c("SALDATO")
+                buffer += enc(f"ACCONTO: {acconto:.2f}") + EURO + enc(f" ({metodo})\n")
+                if residuo > 0: buffer += ALIGN_CENTER + S_WIDE + enc(f"DA SALDARE: {residuo:.2f}") + EURO + b"\n" + S_NORM + ALIGN_LEFT
+                else: buffer += ALIGN_CENTER + S_WIDE + b"SALDATO\n" + S_NORM + ALIGN_LEFT
             else:
-                if pagato:
-                    testo += c(f"PAGATO ({metodo})")
-                else:
-                    testo += c("DA PAGARE")
+                if pagato: buffer += ALIGN_CENTER + S_WIDE + enc(f"PAGATO ({metodo})\n") + S_NORM + ALIGN_LEFT
             
-            testo += BOLD_OFF + l("") + BOLD_ON + c(f"Ritiro dal: {data_ritiro_str}") + BOLD_OFF + c("Grazie e Arrivederci!") + b"\n\n\n\n\n" + CUT
+            # 7. RITIRO
+            buffer += b"\n" + ALIGN_CENTER + S_NORM + BOLD_ON + enc(f"Ritiro dal: {data_ritiro_str}\n") + BOLD_OFF
             
-            win32print.WritePrinter(hPrinter, testo)
-            win32print.EndPagePrinter(hPrinter)
-            win32print.EndDocPrinter(hPrinter)
-        finally:
-            win32print.ClosePrinter(hPrinter)
+            # 8. FOOTER
+            buffer += ALIGN_CENTER + S_FOOT
+            if footer_text:
+                for r in footer_text.split('\n'): buffer += enc(r) + b"\n"
+            buffer += ALIGN_LEFT + b"\n\n\n\n\n" + CUT
+            
+            win32print.WritePrinter(hPrinter, buffer)
+            win32print.EndPagePrinter(hPrinter); win32print.EndDocPrinter(hPrinter)
+        finally: win32print.ClosePrinter(hPrinter)
         return True
-    except:
+    except Exception as e: 
+        print("Errore stampa:", e)
         return False
-
-def stampa_fiscale(carrello, sconto=0):
-    ip = get_setting("ip_fiscal")
-    listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(5); s.connect((ip, 9100)); s.send(b"\x18"); time.sleep(0.1) 
-        totale_lordo = sum(i['prezzo'] for i in carrello)
-        for item in carrello:
-            prezzo_effettivo = item['prezzo']
-            if sconto > 0 and totale_lordo > 0: quota_sconto = (item['prezzo'] / totale_lordo) * sconto; prezzo_effettivo = max(0.00, item['prezzo'] - quota_sconto)
-            reparto = "H2R" if item['nome'] in listino_vendita else "H1R"
-            riga = f'"{item["nome"][:20]}" {"{:.2f}".format(prezzo_effettivo)} {reparto}\r\n'; s.send(riga.encode())
-        s.send(b"1T\r\n"); s.close(); return True
-    except: return False
 
 # --- ROTTE API ---
 @app.route('/')
@@ -327,10 +292,7 @@ def home():
 
 @app.route('/api/get_listino_raw')
 def api_get_listino_raw():
-    conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT * FROM listino ORDER BY categoria, capo")
-    items = [dict(row) for row in cursor.fetchall()]; conn.close()
-    return jsonify(items)
+    conn = get_db(); cursor = conn.cursor(); cursor.execute("SELECT * FROM listino ORDER BY categoria, capo"); items = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify(items)
 
 @app.route('/api/save_item_listino', methods=['POST'])
 def api_save_item_listino():
@@ -345,17 +307,11 @@ def api_delete_item_listino():
 
 @app.route('/api/get_settings')
 def api_get_settings():
-    conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT * FROM settings")
-    data = {row['chiave']: row['valore'] for row in cursor.fetchall()}
-    conn.close()
-    
-    # ⚠️ DEBUGGING E CONTROLLO BACKUP
+    conn = get_db(); cursor = conn.cursor(); cursor.execute("SELECT * FROM settings")
+    data = {row['chiave']: row['valore'] for row in cursor.fetchall()}; conn.close()
     backup_folder = os.path.join(BASE_DIR, "backup")
     backup_file = os.path.join(backup_folder, "app.py")
     esiste = os.path.exists(backup_file)
-    print(f"[DEBUG] Controllo backup in: {backup_folder} -> ESISTE? {'SI' if esiste else 'NO'}")
-    
     data['has_backup'] = 1 if esiste else 0
     return jsonify(data)
 
@@ -375,7 +331,7 @@ def get_system_printers():
         flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
         printers = [printer[2] for printer in win32print.EnumPrinters(flags)]
         return jsonify(printers)
-    except Exception as e: return jsonify([])
+    except: return jsonify([])
 
 @app.route('/api/elimina_ordine_definitivo', methods=['POST'])
 def elimina_ordine_definitivo():
@@ -390,13 +346,10 @@ def elimina_ordine_definitivo():
 @app.route('/api/elimina_capo_definitivo', methods=['POST'])
 def elimina_capo_definitivo():
     id_capo = request.json.get('id_capo'); conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (id_capo,))
-    res = cursor.fetchone()
+    cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (id_capo,)); res = cursor.fetchone()
     if not res: conn.close(); return jsonify({'status': 'error', 'msg': 'Codice Capo non trovato!'})
     ordine_id = res[0]
-    cursor.execute("DELETE FROM dettagli_ordine WHERE id = ?", (id_capo,))
-    cursor.execute("SELECT SUM(prezzo) FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
-    nuovo_totale = cursor.fetchone()[0] or 0.0
+    cursor.execute("DELETE FROM dettagli_ordine WHERE id = ?", (id_capo,)); cursor.execute("SELECT SUM(prezzo) FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,)); nuovo_totale = cursor.fetchone()[0] or 0.0
     cursor.execute("UPDATE ordini SET totale = ? WHERE id = ?", (nuovo_totale, ordine_id))
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': f'Capo {id_capo} eliminato. Totale ordine aggiornato.'})
 
@@ -547,7 +500,7 @@ def modifica_capo_ordine():
     nuovo_tot = cursor.fetchone()[0]; cursor.execute("UPDATE ordini SET totale = ? WHERE id = (SELECT ordine_id FROM dettagli_ordine WHERE id = ?)", (nuovo_tot, d['id']))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
-# --- SISTEMA AGGIORNAMENTO CORRETTO E ROBUSTO ---
+# --- SISTEMA AGGIORNAMENTO CON BACKUP ---
 @app.route('/api/check_update')
 def check_update():
     try:
@@ -564,25 +517,20 @@ def check_update():
 @app.route('/api/perform_update', methods=['POST'])
 def perform_update():
     try:
-        # BACKUP
-        backup_dir = os.path.join(BASE_DIR, "backup")
-        templates_dir = os.path.join(BASE_DIR, "templates")
+        backup_dir = os.path.join(BASE_DIR, "backup"); templates_dir = os.path.join(BASE_DIR, "templates")
         if not os.path.exists(backup_dir): os.makedirs(backup_dir)
         shutil.copy(os.path.join(BASE_DIR, "app.py"), os.path.join(backup_dir, "app.py"))
         if os.path.exists(os.path.join(templates_dir, "index.html")): shutil.copy(os.path.join(templates_dir, "index.html"), os.path.join(backup_dir, "index.html"))
         if os.path.exists(os.path.join(BASE_DIR, "version.txt")): shutil.copy(os.path.join(BASE_DIR, "version.txt"), os.path.join(backup_dir, "version.txt"))
         
-        # DOWNLOAD INTELLIGENTE (Prova templates/index.html, se fallisce prova index.html)
+        # FIX NOT FOUND
         urllib.request.urlretrieve(GITHUB_REPO_BASE + "app.py", os.path.join(BASE_DIR, "app.py"))
         if not os.path.exists(templates_dir): os.makedirs(templates_dir)
         try:
             urllib.request.urlretrieve(GITHUB_REPO_BASE + "templates/index.html", os.path.join(templates_dir, "index.html"))
         except urllib.error.HTTPError as e:
-            if e.code == 404:
-                # SE NON TROVA IN TEMPLATES, CERCA NELLA ROOT
-                urllib.request.urlretrieve(GITHUB_REPO_BASE + "index.html", os.path.join(templates_dir, "index.html"))
+            if e.code == 404: urllib.request.urlretrieve(GITHUB_REPO_BASE + "index.html", os.path.join(templates_dir, "index.html"))
             else: raise e
-        
         urllib.request.urlretrieve(GITHUB_REPO_BASE + "version.txt", os.path.join(BASE_DIR, "version.txt"))
         return jsonify({'status': 'success', 'msg': 'Aggiornamento completato!'})
     except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
@@ -597,6 +545,20 @@ def restore_backup():
         if os.path.exists(os.path.join(backup_dir, "version.txt")): shutil.copy(os.path.join(backup_dir, "version.txt"), os.path.join(BASE_DIR, "version.txt"))
         return jsonify({'status':'success', 'msg':'Ripristino completato! Riavvia il programma.'})
     except Exception as e: return jsonify({'status':'error', 'msg':str(e)})
+
+# --- NUOVA ROTTA TEST STAMPA ---
+@app.route('/api/test_print', methods=['POST'])
+def api_test_print():
+    tipo = request.json.get('tipo')
+    fake_cart = [{'nome': 'Camicia Test', 'prezzo': 5.00}, {'nome': 'Giacca Test', 'prezzo': 10.00}]
+    fake_date = datetime.now().strftime("%d/%m/%Y")
+    
+    if tipo == 'scontrino':
+        stampa_scontrino(9999, fake_date, "MARIO ROSSI (TEST)", fake_cart, 15.00, 0, 0, "25/12", False, "Contanti")
+    elif tipo == 'etichetta':
+        stampa_etichette(9999, fake_cart, "MARIO ROSSI", "25/12")
+        
+    return jsonify({'status': 'success'})
 
 if __name__ == '__main__': 
     init_db()
