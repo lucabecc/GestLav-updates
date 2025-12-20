@@ -241,6 +241,7 @@
                             <p id="update-msg" class="mb-2">Verifica disponibilità aggiornamenti online.</p>
                             <button class="btn btn-primary w-100" id="btn-check-update" onclick="checkUpdate()">☁️ CERCA AGGIORNAMENTI</button>
                             <button class="btn btn-success w-100 mt-2 hidden" id="btn-do-update" onclick="performUpdate()">SCARICA E AGGIORNA</button>
+                            <button class="btn btn-danger w-100 mt-2" id="btn-restore" onclick="restoreBackup()" style="display:none;">↩️ RIPRISTINA VERSIONE PRECEDENTE</button>
                         </div>
                         <hr>
                         <div class="form-check form-switch mb-4">
@@ -386,9 +387,20 @@
     async function apriModalSospesi() { const res = await fetch('/recupera_sospesi'); const data = await res.json(); const ul = document.getElementById('lista-sospesi'); ul.innerHTML = ''; if(data.length === 0) ul.innerHTML = '<li class="list-group-item">Nessun ordine sospeso.</li>'; data.forEach(o => { ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div><strong>${o.nome} ${o.cognome}</strong><br><small>${new Date(o.data_ingresso).toLocaleTimeString()}</small></div><button class="btn btn-primary btn-sm" onclick="caricaSospeso(${o.id})">Recupera</button></li>`; }); new bootstrap.Modal(document.getElementById('modalSospesi')).show(); }
     async function caricaSospeso(id) { const res = await fetch('/carica_sospeso', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})}); const d = await res.json(); selezionaCliente(d.cliente); carrello = d.carrello; aggiornaScontrino(); bootstrap.Modal.getInstance(document.getElementById('modalSospesi')).hide(); }
     
-    // --- GESTIONE IMPOSTAZIONI ---
+    // --- GESTIONE IMPOSTAZIONI E AGGIORNAMENTO ---
     async function apriImpostazioni() { 
-        const res=await fetch('/api/get_settings'); const d=await res.json(); 
+        const res=await fetch('/api/get_settings'); 
+        const d=await res.json(); 
+        
+        // --- MOSTRA TASTO RIPRISTINO SENZA CONTROLLI DI TIPO ---
+        const btnRestore = document.getElementById('btn-restore');
+        console.log("Valore backup ricevuto:", d.has_backup); // DEBUG NELLA CONSOLE BROWSER (F12)
+        
+        if (d.has_backup) {
+            btnRestore.style.display = 'block'; // Forza visibilità
+        } else {
+            btnRestore.style.display = 'none';
+        }
         
         // Rileva stampanti sistema
         const savedPrinter = d.printer_star || '';
@@ -423,11 +435,12 @@
         new bootstrap.Modal(document.getElementById('modalImpostazioni')).show(); 
     }
     
-    // --- LOGICA AGGIORNAMENTO SOFTWARE ---
+    // --- LOGICA AGGIORNAMENTO SOFTWARE E RIPRISTINO ---
     async function checkUpdate() {
         const btn = document.getElementById('btn-check-update');
         const msg = document.getElementById('update-msg');
         const btnDo = document.getElementById('btn-do-update');
+        const btnRestore = document.getElementById('btn-restore');
         
         btn.disabled = true;
         btn.innerHTML = "⏳ Controllo in corso...";
@@ -436,6 +449,11 @@
             const res = await fetch('/api/check_update');
             const data = await res.json();
             
+            // Aggiorna stato backup anche qui
+            if (data.has_backup) {
+                btnRestore.style.display = 'block';
+            }
+
             if (data.update_available) {
                 msg.innerHTML = `📢 <strong>NUOVA VERSIONE DISPONIBILE!</strong><br>Tua versione: ${data.local} -> Nuova: ${data.remote}`;
                 msg.className = "alert alert-success";
@@ -470,6 +488,25 @@
         } else {
             alert("Errore aggiornamento: " + data.msg);
             btnDo.disabled = false;
+        }
+    }
+
+    async function restoreBackup() {
+        if(!confirm("ATTENZIONE: Stai per tornare alla versione precedente. Confermi?")) return;
+        
+        const btnRestore = document.getElementById('btn-restore');
+        btnRestore.disabled = true;
+        btnRestore.innerHTML = "⏳ RIPRISTINO...";
+        
+        const res = await fetch('/api/restore_backup', {method:'POST'});
+        const data = await res.json();
+        
+        if (data.status === 'success') {
+            alert(data.msg);
+            location.reload();
+        } else {
+            alert("Errore ripristino: " + data.msg);
+            btnRestore.disabled = false;
         }
     }
 
