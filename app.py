@@ -29,20 +29,22 @@ FESTIVITA = [
     "2025-08-10", "2025-08-11", "2025-08-12" 
 ]
 
+# Modificato listino default per includere il tipo stoccaggio (Default Nastro)
+# Struttura: Categoria, Nome, Prezzo, TipoStoccaggio (0=Nastro, 1=Scaffale) - Usiamo stringhe "Nastro", "Scaffale"
 LISTINO_DEFAULT = [
-    ("ABBIGLIAMENTO", "Camicia", 5.00), ("ABBIGLIAMENTO", "Pantalone", 7.00),
-    ("ABBIGLIAMENTO", "Giacca", 10.00), ("ABBIGLIAMENTO", "Completo Uomo", 17.00),
-    ("ABBIGLIAMENTO", "Gonna", 6.00), ("ABBIGLIAMENTO", "Cappotto", 15.00),
-    ("ABBIGLIAMENTO", "Impermeabile", 16.00), ("ABBIGLIAMENTO", "Maglione", 6.00),
-    ("CASA & LETTO", "Piumone Singolo", 25.00), ("CASA & LETTO", "Piumone Matrim.", 30.00),
-    ("CASA & LETTO", "Trapunta Sing.", 22.00), ("CASA & LETTO", "Trapunta Matr.", 28.00),
-    ("CASA & LETTO", "Copriletto", 15.00), ("CASA & LETTO", "Lenzuolo", 4.00),
-    ("CASA & LETTO", "Federa", 2.00), ("CASA & LETTO", "Tappeto (al kg)", 7.00),
-    ("LAVORO", "Tuta da Lavoro", 9.00), ("LAVORO", "Giacca Lavoro", 8.00),
-    ("LAVORO", "Pantalone Lavoro", 7.00), ("LAVORO", "Camice Medico", 6.00),
-    ("PRODOTTI VENDITA", "Detersivo sfuso", 3.50), ("PRODOTTI VENDITA", "Ammorbidente", 4.00),
-    ("PRODOTTI VENDITA", "Profumatore", 6.00), ("PRODOTTI VENDITA", "Grucce (10pz)", 2.50),
-    ("PRODOTTI VENDITA", "Sacchi Custodia", 1.00)
+    ("ABBIGLIAMENTO", "Camicia", 5.00, "Nastro"), ("ABBIGLIAMENTO", "Pantalone", 7.00, "Nastro"),
+    ("ABBIGLIAMENTO", "Giacca", 10.00, "Nastro"), ("ABBIGLIAMENTO", "Completo Uomo", 17.00, "Nastro"),
+    ("ABBIGLIAMENTO", "Gonna", 6.00, "Nastro"), ("ABBIGLIAMENTO", "Cappotto", 15.00, "Nastro"),
+    ("ABBIGLIAMENTO", "Impermeabile", 16.00, "Nastro"), ("ABBIGLIAMENTO", "Maglione", 6.00, "Nastro"),
+    ("CASA & LETTO", "Piumone Singolo", 25.00, "Scaffale"), ("CASA & LETTO", "Piumone Matrim.", 30.00, "Scaffale"),
+    ("CASA & LETTO", "Trapunta Sing.", 22.00, "Scaffale"), ("CASA & LETTO", "Trapunta Matr.", 28.00, "Scaffale"),
+    ("CASA & LETTO", "Copriletto", 15.00, "Scaffale"), ("CASA & LETTO", "Lenzuolo", 4.00, "Scaffale"),
+    ("CASA & LETTO", "Federa", 2.00, "Scaffale"), ("CASA & LETTO", "Tappeto (al kg)", 7.00, "Scaffale"),
+    ("LAVORO", "Tuta da Lavoro", 9.00, "Nastro"), ("LAVORO", "Giacca Lavoro", 8.00, "Nastro"),
+    ("LAVORO", "Pantalone Lavoro", 7.00, "Nastro"), ("LAVORO", "Camice Medico", 6.00, "Nastro"),
+    ("PRODOTTI VENDITA", "Detersivo sfuso", 3.50, "Scaffale"), ("PRODOTTI VENDITA", "Ammorbidente", 4.00, "Scaffale"),
+    ("PRODOTTI VENDITA", "Profumatore", 6.00, "Scaffale"), ("PRODOTTI VENDITA", "Grucce (10pz)", 2.50, "Scaffale"),
+    ("PRODOTTI VENDITA", "Sacchi Custodia", 1.00, "Scaffale")
 ]
 
 def get_db():
@@ -62,15 +64,30 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
-    # --- MIGRATION: AGGIUNTA COLONNA ORDINE AL LISTINO SE NON ESISTE ---
+    # --- MIGRAZIONI DATABASE (AGGIUNTA COLONNE MANCANTI) ---
+    
+    # 1. Colonna ORDINE in LISTINO (per drag & drop)
     try:
         cursor.execute("SELECT ordine FROM listino LIMIT 1")
     except sqlite3.OperationalError:
-        print("Aggiornamento Database: Aggiunta colonna 'ordine' al listino...")
         cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0")
-        # Inizializza l'ordine basandosi sull'ID esistente per evitare disordine
         cursor.execute("UPDATE listino SET ordine = id")
-        conn.commit()
+        
+    # 2. Colonna TIPO_STOCCAGGIO in LISTINO (Nastro/Scaffale)
+    try:
+        cursor.execute("SELECT tipo_stoccaggio FROM listino LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE listino ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
+        # Update intelligente per default
+        cursor.execute("UPDATE listino SET tipo_stoccaggio = 'Scaffale' WHERE categoria LIKE '%CASA%' OR categoria LIKE '%PRODOTTI%'")
+
+    # 3. Colonna TIPO_STOCCAGGIO in DETTAGLI_ORDINE (per sapere dove sta il capo specifico)
+    try:
+        cursor.execute("SELECT tipo_stoccaggio FROM dettagli_ordine LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
+
+    conn.commit()
 
     # Settings di Default
     defaults = [
@@ -96,11 +113,11 @@ def init_db():
     
     cursor.execute("SELECT COUNT(*) FROM listino")
     if cursor.fetchone()[0] == 0: 
-        # Inserimento iniziale con ordine
-        items_with_order = []
+        # Inserimento iniziale con ordine e tipo
         for idx, item in enumerate(LISTINO_DEFAULT):
-            items_with_order.append((item[0], item[1], item[2], idx))
-        cursor.executemany("INSERT INTO listino (categoria, capo, prezzo, ordine) VALUES (?, ?, ?, ?)", items_with_order)
+            # item = (Cat, Nome, Prezzo, Tipo)
+            cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", 
+                           (item[0], item[1], item[2], item[3], idx))
     
     conn.commit(); conn.close()
     
@@ -119,13 +136,13 @@ def set_setting(chiave, valore):
 
 def get_listino_dict():
     conn = get_db(); cursor = conn.cursor()
-    # MODIFICA: Ordinamento per colonna 'ordine' invece che alfabetico
     cursor.execute("SELECT * FROM listino ORDER BY ordine ASC"); 
     rows = cursor.fetchall(); conn.close()
     
     listino_dict = {}
     for row in rows:
         if row['categoria'] not in listino_dict: listino_dict[row['categoria']] = {}
+        # Salviamo solo il prezzo per la visualizzazione rapida nel frontend (come prima)
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
@@ -301,14 +318,13 @@ def home():
 @app.route('/api/get_listino_raw')
 def api_get_listino_raw():
     conn = get_db(); cursor = conn.cursor()
-    # MODIFICA: Ordina per ordine ASC
+    # Recupera anche il tipo_stoccaggio
     cursor.execute("SELECT * FROM listino ORDER BY ordine ASC")
     items = [dict(row) for row in cursor.fetchall()]; conn.close()
     return jsonify(items)
 
 @app.route('/api/aggiorna_ordine_listino', methods=['POST'])
 def api_aggiorna_ordine_listino():
-    # Riceve una lista di ID nell'ordine desiderato
     nuovo_ordine = request.json.get('ordine_ids', [])
     conn = get_db(); cursor = conn.cursor()
     try:
@@ -324,14 +340,18 @@ def api_aggiorna_ordine_listino():
 @app.route('/api/save_item_listino', methods=['POST'])
 def api_save_item_listino():
     d = request.json; conn = get_db(); cursor = conn.cursor()
+    # Default Nastro se non specificato
+    tipo = d.get('tipo_stoccaggio', 'Nastro')
+    
     if 'id' in d and d['id']: 
-        cursor.execute("UPDATE listino SET categoria=?, capo=?, prezzo=? WHERE id=?", (d['categoria'].upper(), d['capo'], d['prezzo'], d['id']))
+        cursor.execute("UPDATE listino SET categoria=?, capo=?, prezzo=?, tipo_stoccaggio=? WHERE id=?", 
+                       (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, d['id']))
     else: 
-        # Calcola il prossimo ordine disponibile per mettere il nuovo capo in fondo
         cursor.execute("SELECT MAX(ordine) FROM listino")
         max_order = cursor.fetchone()[0]
         next_order = (max_order + 1) if max_order is not None else 0
-        cursor.execute("INSERT INTO listino (categoria, capo, prezzo, ordine) VALUES (?, ?, ?, ?)", (d['categoria'].upper(), d['capo'], d['prezzo'], next_order))
+        cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", 
+                       (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, next_order))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
 @app.route('/api/delete_item_listino', methods=['POST'])
@@ -415,7 +435,9 @@ def crea_cliente():
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
     q = request.args.get('q', ''); cliente_id = request.args.get('cliente_id', ''); conn = get_db(); cursor = conn.cursor()
-    sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena) FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
+    # Aggiunto tipo_stoccaggio nella query dei dettagli (recuperato tramite posizioni)
+    # Nota: la query qui recupera testate d'ordine, i dettagli specifici li prendiamo in get_dettagli_ordine
+    sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
     conditions = []
     if cliente_id: conditions.append(f"o.cliente_id = {cliente_id}")
     elif q.isdigit(): conditions.append(f"o.num_scontrino = {q}")
@@ -430,7 +452,8 @@ def cerca_ordini_aperti():
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
     cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone(); info = {'totale_ordine': res[0], 'totale_versato': res[1], 'fiscale_emesso': res[2], 'fiscale_desk': res[3]}
-    cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
+    # Recupera anche tipo_stoccaggio
+    cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
 
 @app.route('/consegna_items', methods=['POST'])
@@ -448,7 +471,6 @@ def consegna_items():
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,)); 
         if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
         if richiesta_fiscale:
-            # Qui andrebbe chiamata la stampa_fiscale se esistesse nel codice
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,)); msg = "✅ Scontrino Fiscale Stampato!"
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
@@ -465,20 +487,28 @@ def salva_ordine():
     if acconto >= totale: pagato = True
     else: pagato = False
     if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
+    
     conn = get_db(); cursor = conn.cursor()
     last_reset = get_setting("last_reset_date")
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
+    
     stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
     if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
     fiscale_desk_val = 1 if stampa_ora else 0
+    
     cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione'))
     oid = cursor.lastrowid
     stato_lavorazione = 1 if solo_prodotti else 0
     
-    # ⚠️ RECUPERO ID REALE CAPO ⚠️
+    # ⚠️ RECUPERO ID REALE CAPO e TIPO STOCCAGGIO ⚠️
     items_con_id = []
     for i in carrello: 
-        cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione) VALUES (?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione))
+        # Cerca il tipo di stoccaggio nel listino
+        cursor.execute("SELECT tipo_stoccaggio FROM listino WHERE capo = ?", (i['nome'],))
+        res = cursor.fetchone()
+        tipo_stoccaggio = res[0] if res else 'Nastro' # Default Nastro se non trovato
+        
+        cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione, tipo_stoccaggio) VALUES (?, ?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione, tipo_stoccaggio))
         item_id = cursor.lastrowid
         # Oggetto completo con ID per stampa etichetta
         capo_con_id = i.copy()
@@ -493,7 +523,7 @@ def salva_ordine():
         stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
         
     if stampa_ora: 
-        # stampa_fiscale(carrello, sconto) # Decommentare se hai la funzione fiscale
+        # stampa_fiscale(carrello, sconto) 
         pass
     return jsonify({"status": "success", "id_ordine": oid})
 

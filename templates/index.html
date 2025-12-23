@@ -54,8 +54,6 @@
         .status-dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; }
         .status-giallo { background-color: #ffc107; }
         .status-verde { background-color: #198754; }
-        
-        /* Stile per la maniglia di trascinamento */
         .drag-handle { cursor: grab; color: #aaa; margin-right: 10px; }
         .drag-handle:hover { color: #333; }
         .sortable-ghost { opacity: 0.4; background-color: #e2e6ea; }
@@ -226,7 +224,7 @@
                         </div>
                         <div style="height: 300px; overflow-y: auto;">
                             <table class="table table-striped table-hover">
-                                <thead class="table-dark"><tr><th>Ord.</th><th>Capo</th><th>Prezzo</th><th>Azioni</th></tr></thead>
+                                <thead class="table-dark"><tr><th>Ord.</th><th>Capo</th><th>Tipo</th><th>Prezzo</th><th>Azioni</th></tr></thead>
                                 <tbody id="tabella-listino"></tbody>
                             </table>
                         </div>
@@ -373,7 +371,12 @@
                 <input class="form-control mb-2" list="datalistCategorie" id="edit-listino-cat" placeholder="Seleziona o scrivi nuova...">
                 <datalist id="datalistCategorie"></datalist>
                 <label>Nome Capo</label><input type="text" id="edit-listino-nome" class="form-control mb-2">
-                <label>Prezzo</label><input type="number" id="edit-listino-prezzo" class="form-control" step="0.50">
+                <label>Prezzo</label><input type="number" id="edit-listino-prezzo" class="form-control mb-2" step="0.50">
+                <label>Posizione Default (Nastro/Scaffale)</label>
+                <select id="edit-listino-tipo" class="form-select">
+                    <option value="Nastro">🔄 Nastro</option>
+                    <option value="Scaffale">📦 Scaffale</option>
+                </select>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
@@ -394,7 +397,7 @@
     let modalConsegnaObj = null; let modalSceltaOrdineObj = null;
     let lastSearchQuery = { type: null, val: null }; 
     let listinoRaw = []; 
-    let sortableInstance = null; // ISTANZA PER IL DRAG AND DROP
+    let sortableInstance = null; 
 
     async function initCalendar() { try { const res = await fetch('/api/carico_lavoro'); caricoLavoro = await res.json(); picker = flatpickr("#data-ritiro", { locale: "it", dateFormat: "d/m", defaultDate: new Date().fp_incr(3), minDate: "today", disable: [ function(date) { if (date.getDay() === 0) return true; let dm = date.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}).replace('/', '-'); let fullDate = date.toISOString().split('T')[0]; return festivita.includes(dm) || festivita.includes(fullDate); } ], onDayCreate: function(dObj, dStr, fp, dayElem) { let key = dayElem.dateObj.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}); if (dayElem.classList.contains("flatpickr-disabled")) { dayElem.classList.add("festivo"); } if (caricoLavoro[key]) { dayElem.innerHTML += `<span class='capi-counter'>${caricoLavoro[key]}</span>`; } } }); } catch (e) { console.error("Errore Calendario:", e); } }
 
@@ -482,7 +485,6 @@
             const btnRestore = document.getElementById('btn-restore');
             if (d.has_backup) { btnRestore.style.display = 'block'; } else { btnRestore.style.display = 'none'; }
 
-            // CARICA VALORI STAMPA
             document.getElementById('conf-header').value = d.ticket_header || '';
             document.getElementById('conf-footer').value = d.ticket_footer || '';
             document.getElementById('conf-print-logo').checked = (d.print_logo == '1');
@@ -559,7 +561,7 @@
             font_num: document.getElementById('conf-size-num').value,
             font_customer: document.getElementById('conf-size-cust').value,
             font_items: document.getElementById('conf-size-item').value,
-            font_total: document.getElementById('conf-size-total').value,
+            font_total: document.getElementById('conf-size-total').value, 
             font_footer: document.getElementById('conf-size-footer').value,
             font_label_row1: document.getElementById('conf-font-row1').value,
             font_label_row2: document.getElementById('conf-font-row2').value,
@@ -570,7 +572,6 @@
         await fetch('/api/save_settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dati)}); 
     }
     
-    // --- LOGICA AGGIORNAMENTO SOFTWARE E RIPRISTINO ---
     async function checkUpdate() {
         const btn = document.getElementById('btn-check-update');
         const msg = document.getElementById('update-msg');
@@ -640,10 +641,12 @@
         const items = listinoRaw.filter(x => !cat || x.categoria === cat);
         
         items.forEach(x => {
-            tbody.innerHTML += `<tr data-id="${x.id}"><td class="drag-handle"><i class="bi bi-list"></i> ${x.ordine || 0}</td><td>${x.capo}<br><small class="text-muted">${x.categoria}</small></td><td>€ ${x.prezzo.toFixed(2)}</td><td><button class="btn btn-sm btn-warning" onclick="modificaCapoListino(${x.id})"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-danger" onclick="eliminaCapoListino(${x.id})"><i class="bi bi-trash"></i></button></td></tr>`;
+            // Icona stoccaggio
+            let iconaStoccaggio = x.tipo_stoccaggio === 'Scaffale' ? '📦 Scaffale' : '🔄 Nastro';
+            
+            tbody.innerHTML += `<tr data-id="${x.id}"><td class="drag-handle"><i class="bi bi-list"></i> ${x.ordine || 0}</td><td>${x.capo}<br><small class="text-muted">${x.categoria}</small></td><td>${iconaStoccaggio}</td><td>€ ${x.prezzo.toFixed(2)}</td><td><button class="btn btn-sm btn-warning" onclick="modificaCapoListino(${x.id})"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-danger" onclick="eliminaCapoListino(${x.id})"><i class="bi bi-trash"></i></button></td></tr>`;
         });
 
-        // INIT SORTABLE JS SU QUESTA TABELLA
         if(sortableInstance) sortableInstance.destroy();
         sortableInstance = new Sortable(tbody, {
             handle: '.drag-handle',
@@ -665,19 +668,37 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ordine_ids: ids})
         });
-        // Ricarichiamo i dati grezzi per aggiornare l'array locale
         const r2 = await fetch('/api/get_listino_raw'); 
         listinoRaw = await r2.json();
-        // Nota: non ricarichiamo la pagina qui per non chiudere il modal,
-        // ma l'ordine sarà effettivo al prossimo refresh della home
     }
 
-    function apriModalAggiungiCapo() { document.getElementById('edit-listino-id').value = ''; document.getElementById('edit-listino-cat').value = ''; document.getElementById('edit-listino-nome').value = ''; document.getElementById('edit-listino-prezzo').value = ''; new bootstrap.Modal(document.getElementById('modalCapo')).show(); }
+    function apriModalAggiungiCapo() { 
+        document.getElementById('edit-listino-id').value = ''; 
+        document.getElementById('edit-listino-cat').value = ''; 
+        document.getElementById('edit-listino-nome').value = ''; 
+        document.getElementById('edit-listino-prezzo').value = ''; 
+        document.getElementById('edit-listino-tipo').value = 'Nastro'; 
+        new bootstrap.Modal(document.getElementById('modalCapo')).show(); 
+    }
 
-    function modificaCapoListino(id) { const item = listinoRaw.find(x => x.id === id); document.getElementById('edit-listino-id').value = item.id; document.getElementById('edit-listino-cat').value = item.categoria; document.getElementById('edit-listino-nome').value = item.capo; document.getElementById('edit-listino-prezzo').value = item.prezzo; new bootstrap.Modal(document.getElementById('modalCapo')).show(); }
+    function modificaCapoListino(id) { 
+        const item = listinoRaw.find(x => x.id === id); 
+        document.getElementById('edit-listino-id').value = item.id; 
+        document.getElementById('edit-listino-cat').value = item.categoria; 
+        document.getElementById('edit-listino-nome').value = item.capo; 
+        document.getElementById('edit-listino-prezzo').value = item.prezzo; 
+        document.getElementById('edit-listino-tipo').value = item.tipo_stoccaggio || 'Nastro'; 
+        new bootstrap.Modal(document.getElementById('modalCapo')).show(); 
+    }
 
     async function salvaCapoListino() {
-        const d = { id: document.getElementById('edit-listino-id').value, categoria: document.getElementById('edit-listino-cat').value, capo: document.getElementById('edit-listino-nome').value, prezzo: document.getElementById('edit-listino-prezzo').value };
+        const d = { 
+            id: document.getElementById('edit-listino-id').value, 
+            categoria: document.getElementById('edit-listino-cat').value, 
+            capo: document.getElementById('edit-listino-nome').value, 
+            prezzo: document.getElementById('edit-listino-prezzo').value,
+            tipo_stoccaggio: document.getElementById('edit-listino-tipo').value
+        };
         if(!d.categoria || !d.capo || !d.prezzo) return alert("Compila tutti i campi!");
         await fetch('/api/save_item_listino', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)});
         bootstrap.Modal.getInstance(document.getElementById('modalCapo')).hide();
@@ -809,7 +830,7 @@
     function renderConsegnaList() { const ul = document.getElementById('cons-lista'); ul.innerHTML = ''; cacheCapiConsegna.forEach(c => { let checked = c.ritirato ? 'checked disabled' : ''; let label = c.ritirato ? '(Già Ritirato)' : ''; let editBtn = !c.ritirato ? `<button class="btn btn-sm btn-outline-warning ms-2" onclick="apriEditCapo(${c.id}, '${c.capo}', ${c.prezzo})">✏️</button>` : ''; 
         let tappetoInput = ''; if(c.capo.toLowerCase().includes('tappeto') && !c.ritirato) { tappetoInput = `<div class="input-group input-group-sm mt-1" style="width: 150px;"><span class="input-group-text fw-bold">KG</span><input type="number" class="form-control fw-bold" placeholder="0.0" step="0.1" onchange="aggiornaPrezzoTappeto(${c.id}, this.value)"></div>`; }
         let statusDot = c.stato_lavorazione ? '<span class="status-dot status-verde"></span>' : '<span class="status-dot status-giallo"></span>'; 
-        let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena}</span>` : ''; 
+        let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena} (${c.tipo_stoccaggio || 'Nastro'})</span>` : ''; 
         ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[Cod: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}</div></li>`; }); calcolaSaldoParziale(); }
     
     async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
