@@ -200,7 +200,49 @@
 </div>
 
 <div class="modal fade" id="modalSceltaOrdine" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">Scegli Ordine da Ritirare</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div id="lista-ordini-scelta" class="list-group"></div></div></div></div></div>
-<div class="modal fade" id="modalConsegna" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">📦 Ritiro Capi - Ordine #<span id="cons-id"></span></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><h4 id="cons-cliente" class="mb-3 text-primary fw-bold"></h4><div class="alert alert-light border p-3 mb-3"><div class="row align-items-center"><div class="col-md-6 text-center"><label class="fw-bold text-danger">SCONTO EXTRA (€)</label><input type="number" id="sconto-consegna" class="form-control form-control-lg text-center text-danger fw-bold border-danger" value="0" min="0" step="0.5" onchange="calcolaSaldoParziale()" onkeydown="if(event.key==='Enter') calcolaSaldoParziale()"></div><div class="col-md-6 text-center"><div class="fw-bold fs-3 text-primary">DA INCASSARE</div><div class="fw-bold fs-1" id="cons-residuo-parziale" data-val="0">€ 0.00</div></div></div></div><div class="d-flex justify-content-end mb-2"><button class="btn btn-outline-secondary btn-sm" onclick="toggleSelezionaTutto()">✅ Seleziona Tutto</button></div><div id="cons-lista" class="list-group mb-4"></div><div class="row g-2"><div class="col-6"><button class="btn btn-secondary w-100 py-3 fw-bold" onclick="confermaConsegna(false)">📦 CONSEGNA (NO Scontrino)</button></div><div class="col-6"><button id="btn-consegna-fiscale" class="btn btn-success w-100 py-3 fw-bold" onclick="confermaConsegna(true)">🖨️ CONSEGNA + FISCALE</button></div></div></div></div></div></div>
+
+<div class="modal fade" id="modalConsegna" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">📦 Ritiro Capi - Ordine #<span id="cons-id"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <h4 id="cons-cliente" class="mb-3 text-primary fw-bold"></h4>
+                <div class="alert alert-light border p-3 mb-3">
+                    <div class="row align-items-center">
+                        <div class="col-md-6 text-center">
+                            <label class="fw-bold text-danger">SCONTO EXTRA (€)</label>
+                            <input type="number" id="sconto-consegna" class="form-control form-control-lg text-center text-danger fw-bold border-danger" value="0" min="0" step="0.5" onchange="calcolaSaldoParziale()" onkeydown="if(event.key==='Enter') calcolaSaldoParziale()">
+                        </div>
+                        <div class="col-md-6 text-center">
+                            <div class="fw-bold fs-3 text-primary">DA INCASSARE</div>
+                            <div class="fw-bold fs-1" id="cons-residuo-parziale" data-val="0">€ 0.00</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-end mb-2">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="toggleSelezionaTutto()">✅ Seleziona Tutto</button>
+                </div>
+                
+                <div id="cons-lista" class="list-group mb-4"></div>
+                
+                <div id="box-metodi-consegna" class="row g-2 mb-3" style="display:none;">
+                    <div class="col-6"><div class="pay-option pay-selected" id="opt-cons-contanti" onclick="selectMetodoConsegna('Contanti')">💶 CONTANTI</div></div>
+                    <div class="col-6"><div class="pay-option" id="opt-cons-carta" onclick="selectMetodoConsegna('Carta')">💳 CARTA</div></div>
+                </div>
+
+                <div class="row g-2">
+                    <div class="col-6"><button class="btn btn-secondary w-100 py-3 fw-bold" onclick="confermaConsegna(false)">📦 CONSEGNA (NO Scontrino)</button></div>
+                    <div class="col-6"><button id="btn-consegna-fiscale" class="btn btn-success w-100 py-3 fw-bold" onclick="confermaConsegna(true)">🖨️ CONSEGNA + FISCALE</button></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="modalEditConsegna" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content"><div class="modal-header bg-warning"><h5 class="modal-title">Modifica Capo</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="edit-id-capo"><label>Nome</label><input type="text" id="edit-nome-capo" class="form-control mb-2" onkeydown="if(event.key==='Enter') salvaModificaCapo()"><label>Prezzo</label><input type="number" id="edit-prezzo-capo" class="form-control mb-3" step="0.50" onkeydown="if(event.key==='Enter') salvaModificaCapo()"><button class="btn btn-primary w-100" onclick="salvaModificaCapo()">Salva</button></div></div></div></div>
 
 <div class="modal fade" id="modalImpostazioni" tabindex="-1">
@@ -485,9 +527,12 @@
             const btnRestore = document.getElementById('btn-restore');
             if (d.has_backup) { btnRestore.style.display = 'block'; } else { btnRestore.style.display = 'none'; }
 
+            // CARICA VALORI STAMPA
             document.getElementById('conf-header').value = d.ticket_header || '';
             document.getElementById('conf-footer').value = d.ticket_footer || '';
             document.getElementById('conf-print-logo').checked = (d.print_logo == '1');
+            
+            // Nuovi selettori scontrino
             document.getElementById('conf-size-header').value = d.font_header || 'wide';
             document.getElementById('conf-size-num').value = d.font_num || 'big';
             document.getElementById('conf-size-cust').value = d.font_customer || 'big';
@@ -641,9 +686,7 @@
         const items = listinoRaw.filter(x => !cat || x.categoria === cat);
         
         items.forEach(x => {
-            // Icona stoccaggio
             let iconaStoccaggio = x.tipo_stoccaggio === 'Scaffale' ? '📦 Scaffale' : '🔄 Nastro';
-            
             tbody.innerHTML += `<tr data-id="${x.id}"><td class="drag-handle"><i class="bi bi-list"></i> ${x.ordine || 0}</td><td>${x.capo}<br><small class="text-muted">${x.categoria}</small></td><td>${iconaStoccaggio}</td><td>€ ${x.prezzo.toFixed(2)}</td><td><button class="btn btn-sm btn-warning" onclick="modificaCapoListino(${x.id})"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-danger" onclick="eliminaCapoListino(${x.id})"><i class="bi bi-trash"></i></button></td></tr>`;
         });
 
@@ -733,7 +776,17 @@
         const data = await res.json(); alert(data.msg); document.getElementById('del-id-capo').value = '';
     }
 
-    // --- NUOVA LOGICA: RICERCA SEPARATA ---
+    // --- NUOVA LOGICA: PAGAMENTO RICONSEGNA ---
+    let metodoConsegnaScelto = 'Contanti';
+
+    function selectMetodoConsegna(m) {
+        metodoConsegnaScelto = m;
+        document.getElementById('opt-cons-contanti').classList.remove('pay-selected');
+        document.getElementById('opt-cons-carta').classList.remove('pay-selected');
+        if(m === 'Contanti') document.getElementById('opt-cons-contanti').classList.add('pay-selected');
+        else document.getElementById('opt-cons-carta').classList.add('pay-selected');
+    }
+
     let ordineProntiId = null;
 
     async function cercaPerScontrino() {
@@ -761,42 +814,51 @@
         ordineProntiId = d.ordine_id; 
         const ul = document.getElementById('lista-pronti'); 
         
-        // Se cambio ordine, pulisco la lista (altrimenti la mantengo per accumulo)
         if(document.getElementById('input-pronti-scontrino').getAttribute('data-last-ord') != ordineProntiId) {
              ul.innerHTML = '';
         }
         document.getElementById('input-pronti-scontrino').setAttribute('data-last-ord', ordineProntiId);
 
-        // Se la lista è vuota (prima volta che cerco), la riempio
         if(ul.children.length === 0) {
             d.items.forEach(i => {
                 ul.innerHTML += `<li class="list-group-item"><input class="form-check-input me-2 chk-pronto" type="checkbox" value="${i.id}"> ${i.capo} <small class="text-muted">[Cod: ${i.id}]</small></li>`;
             });
         }
 
-        // Ora applico le spunte
         d.items.forEach(i => {
             let checkbox = ul.querySelector(`input[value="${i.id}"]`);
             if(checkbox) {
-                if (tipo === 'ordine') {
-                    // SE CERCO PER SCONTRINO -> SPUNTA TUTTO
-                    checkbox.checked = true;
-                } else if (tipo === 'capo' && i.id === d.target_item_id) {
-                    // SE CERCO PER CAPO -> SPUNTA SOLO LUI (accumulo)
-                    checkbox.checked = true;
-                }
+                if (tipo === 'ordine') { checkbox.checked = true; }
+                else if (tipo === 'capo' && i.id === d.target_item_id) { checkbox.checked = true; }
             }
         });
         
         document.getElementById('box-lista-pronti').style.display='block'; 
         document.getElementById('input-catena').focus(); 
         
-        // Pulisco i campi input per essere pronto al prossimo scan
         if(tipo === 'capo') document.getElementById('input-pronti-capo').value = '';
         if(tipo === 'ordine') document.getElementById('input-pronti-scontrino').value = '';
     }
 
-    async function confermaPronti() { let ids = []; document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); const catena = document.getElementById('input-catena').value; await fetch('/conferma_pronti', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})}); alert("Stati aggiornati!"); vaiHome(); }
+    async function confermaPronti() { 
+        let ids = []; 
+        document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); 
+        const catena = document.getElementById('input-catena').value; 
+        
+        const res = await fetch('/conferma_pronti', {
+            method:'POST', 
+            headers:{'Content-Type':'application/json'}, 
+            body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})
+        }); 
+        
+        const data = await res.json();
+        if(data.status === 'error') {
+            alert(data.msg);
+        } else {
+            alert("Stati aggiornati!"); 
+            vaiHome(); 
+        }
+    }
 
     let focusConsegna = -1;
     document.getElementById('cerca-consegna').addEventListener('input', async function() { focusConsegna = -1; const val = this.value; const list = document.getElementById('suggerimenti-consegna'); const tableBody = document.getElementById('tabella-ordini'); list.innerHTML = ''; if (!val) { tableBody.innerHTML = ''; return; } if (val.match(/^\d+$/)) { cercaOrdini(val); list.innerHTML = ''; } else { const res = await fetch(`/cerca_cliente?q=${val}`); const data = await res.json(); data.forEach(c => { let li = document.createElement('li'); li.className = "list-group-item list-group-item-action"; li.innerHTML = `<strong>${c.nome_completo}</strong>`; li.onclick = () => { document.getElementById('cerca-consegna').value = c.nome_completo; list.innerHTML = ''; cercaOrdini(null, c.id); }; list.appendChild(li); }); } });
@@ -835,12 +897,64 @@
     
     async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
 
-    function calcolaSaldoParziale() { let valoreNuovaSelezione = 0; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); if (valoreNuovaSelezione === 0) { mostraIncasso(0); return; } let valoreGiaRitirato = 0; cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); mostraIncasso(daIncassare); }
+    function calcolaSaldoParziale() { 
+        let valoreNuovaSelezione = 0; 
+        document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); 
+        
+        let valoreGiaRitirato = 0; 
+        cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); 
+        
+        let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); 
+        let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
+        let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); 
+        
+        mostraIncasso(daIncassare); 
+
+        // MOSTRA/NASCONDI BLOCCO PAGAMENTO
+        if (daIncassare > 0.01) {
+            document.getElementById('box-metodi-consegna').style.display = 'flex';
+            selectMetodoConsegna('Contanti'); // Reset a contanti di default
+        } else {
+            document.getElementById('box-metodi-consegna').style.display = 'none';
+        }
+    }
+    
     function mostraIncasso(val) { const span = document.getElementById('cons-residuo-parziale'); span.innerText = "€ " + val.toFixed(2); span.setAttribute('data-val', val); span.className = val === 0 ? "fw-bold fs-1 text-success" : "fw-bold fs-1 text-danger"; }
     function toggleSelezionaTutto() { let checkboxes = document.querySelectorAll('.chk-ritiro:not(:disabled)'); let allChecked = Array.from(checkboxes).every(c => c.checked); checkboxes.forEach(chk => chk.checked = !allChecked); calcolaSaldoParziale(); }
     function apriEditCapo(id, nome, prezzo) { document.getElementById('edit-id-capo').value = id; document.getElementById('edit-nome-capo').value = nome; document.getElementById('edit-prezzo-capo').value = prezzo; bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); new bootstrap.Modal(document.getElementById('modalEditConsegna')).show(); }
     async function salvaModificaCapo() { const id = document.getElementById('edit-id-capo').value; const nome = document.getElementById('edit-nome-capo').value; const prezzo = parseFloat(document.getElementById('edit-prezzo-capo').value); await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: nome, prezzo: prezzo}) }); bootstrap.Modal.getInstance(document.getElementById('modalEditConsegna')).hide(); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
-    async function confermaConsegna(stampaFiscale) { let ids = []; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); if (ids.length === 0) return alert("Seleziona almeno un capo!"); let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; if (stampaFiscale) { if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)}?`)) return; } else { if(!confirm("Consegna SENZA scontrino?")) return; } const res = await fetch('/consegna_items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, incasso: incasso, sconto_extra: scontoExtra, stampa_fiscale: stampaFiscale}) }); const data = await res.json(); if(data.msg) alert(data.msg); bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); document.getElementById('cerca-consegna').value = ''; document.getElementById('tabella-ordini').innerHTML = ''; }
+    async function confermaConsegna(stampaFiscale) { 
+        let ids = []; 
+        document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); 
+        if (ids.length === 0) return alert("Seleziona almeno un capo!"); 
+        
+        let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; 
+        let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
+        
+        if (stampaFiscale) { 
+            if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)}?`)) return; 
+        } else { 
+            if(!confirm("Consegna SENZA scontrino?")) return; 
+        } 
+        
+        const res = await fetch('/consegna_items', { 
+            method:'POST', 
+            headers:{'Content-Type':'application/json'}, 
+            body:JSON.stringify({
+                ids: ids, 
+                incasso: incasso, 
+                sconto_extra: scontoExtra, 
+                stampa_fiscale: stampaFiscale,
+                metodo_pagamento: metodoConsegnaScelto
+            }) 
+        }); 
+        
+        const data = await res.json(); 
+        if(data.msg) alert(data.msg); 
+        bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); 
+        document.getElementById('cerca-consegna').value = ''; 
+        document.getElementById('tabella-ordini').innerHTML = ''; 
+    }
 </script>
 </body>
 </html>

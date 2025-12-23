@@ -29,8 +29,6 @@ FESTIVITA = [
     "2025-08-10", "2025-08-11", "2025-08-12" 
 ]
 
-# Modificato listino default per includere il tipo stoccaggio (Default Nastro)
-# Struttura: Categoria, Nome, Prezzo, TipoStoccaggio (0=Nastro, 1=Scaffale) - Usiamo stringhe "Nastro", "Scaffale"
 LISTINO_DEFAULT = [
     ("ABBIGLIAMENTO", "Camicia", 5.00, "Nastro"), ("ABBIGLIAMENTO", "Pantalone", 7.00, "Nastro"),
     ("ABBIGLIAMENTO", "Giacca", 10.00, "Nastro"), ("ABBIGLIAMENTO", "Completo Uomo", 17.00, "Nastro"),
@@ -57,31 +55,25 @@ def init_db():
     db_path = os.path.join(BASE_DIR, DB_NAME)
     conn = get_db(); cursor = conn.cursor()
     
-    # Creazione tabelle standard
     cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT, telefono TEXT, indirizzo TEXT, citta TEXT, cap TEXT, data_nascita TEXT, note TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS dettagli_ordine (id INTEGER PRIMARY KEY AUTOINCREMENT, ordine_id INTEGER, capo TEXT, prezzo REAL, ritirato INTEGER DEFAULT 0, stato_lavorazione INTEGER DEFAULT 0, numero_catena TEXT DEFAULT '')''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
-    # --- MIGRAZIONI DATABASE (AGGIUNTA COLONNE MANCANTI) ---
-    
-    # 1. Colonna ORDINE in LISTINO (per drag & drop)
+    # MIGRATION: COLONNE EXTRA
     try:
         cursor.execute("SELECT ordine FROM listino LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0")
         cursor.execute("UPDATE listino SET ordine = id")
         
-    # 2. Colonna TIPO_STOCCAGGIO in LISTINO (Nastro/Scaffale)
     try:
         cursor.execute("SELECT tipo_stoccaggio FROM listino LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE listino ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
-        # Update intelligente per default
         cursor.execute("UPDATE listino SET tipo_stoccaggio = 'Scaffale' WHERE categoria LIKE '%CASA%' OR categoria LIKE '%PRODOTTI%'")
 
-    # 3. Colonna TIPO_STOCCAGGIO in DETTAGLI_ORDINE (per sapere dove sta il capo specifico)
     try:
         cursor.execute("SELECT tipo_stoccaggio FROM dettagli_ordine LIMIT 1")
     except sqlite3.OperationalError:
@@ -89,7 +81,6 @@ def init_db():
 
     conn.commit()
 
-    # Settings di Default
     defaults = [
         ("printer_star", "Star TSP100 Cutter (TSP143)"), ("port_labels", "COM1"), ("ip_fiscal", "192.168.1.8"), 
         ("fiscal_always", "0"), ("last_reset_date", "2000-01-01 00:00:00"),
@@ -99,11 +90,8 @@ def init_db():
         ("label_custom_text", SEDE),
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
-        ("font_label_row1", "huge"), 
-        ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), 
-        ("font_label_row4", "norm"), 
-        ("label_feed", "12")         
+        ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")         
     ]
     
     for chiave, valore in defaults:
@@ -113,11 +101,8 @@ def init_db():
     
     cursor.execute("SELECT COUNT(*) FROM listino")
     if cursor.fetchone()[0] == 0: 
-        # Inserimento iniziale con ordine e tipo
         for idx, item in enumerate(LISTINO_DEFAULT):
-            # item = (Cat, Nome, Prezzo, Tipo)
-            cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", 
-                           (item[0], item[1], item[2], item[3], idx))
+            cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", (item[0], item[1], item[2], item[3], idx))
     
     conn.commit(); conn.close()
     
@@ -138,11 +123,9 @@ def get_listino_dict():
     conn = get_db(); cursor = conn.cursor()
     cursor.execute("SELECT * FROM listino ORDER BY ordine ASC"); 
     rows = cursor.fetchall(); conn.close()
-    
     listino_dict = {}
     for row in rows:
         if row['categoria'] not in listino_dict: listino_dict[row['categoria']] = {}
-        # Salviamo solo il prezzo per la visualizzazione rapida nel frontend (come prima)
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
@@ -154,7 +137,7 @@ def esegui_chiusura_fiscale():
         return True, "Chiusura Inviata!"
     except Exception as e: return False, f"Errore: {str(e)}"
 
-# --- HELPER FONT ---
+# --- FONTS ---
 def get_star_font(size_name):
     if size_name == "huge": return b'\x1bW\x02\x1bh\x02' 
     if size_name == "big":  return b'\x1bW\x01\x1bh\x01' 
@@ -168,7 +151,7 @@ def get_label_font_command(size_name):
     if size_name == "high": return b'\x1b!\x10' 
     return b'\x1b!\x00' 
 
-# --- STAMPE ETICHETTE ---
+# --- STAMPE ---
 def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
     porta = get_setting("port_labels")
     listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
@@ -195,7 +178,6 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
 
     try:
         def enc(t): return t.encode('cp858', errors='replace')
-        
         if porta.upper().startswith("COM"):
             h = serial.Serial(porta, 9600, timeout=1)
             def write(b): h.write(b)
@@ -206,35 +188,22 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
             def write(b): win32print.WritePrinter(h, b)
             def close(): win32print.EndPagePrinter(h); win32print.EndDocPrinter(h); win32print.ClosePrinter(h)
 
-        write(CP_PC858)
-        write(ALIGN_LEFT)
-        write(SPACE_COMPACT)
-
+        write(CP_PC858); write(ALIGN_LEFT); write(SPACE_COMPACT)
         for i, item in enumerate(capi, 1):
             write(b'\n') 
-            
             riga1 = f"ORD:{num_visibile} ID:{item['id']}"
-            if get_setting("font_label_row1") == "huge":
-                write(f_row1 + enc(f"{riga1}\n"))
-            else:
-                write(f_row1 + BOLD_ON + enc(f"{riga1}\n") + BOLD_OFF)
-            
+            if get_setting("font_label_row1") == "huge": write(f_row1 + enc(f"{riga1}\n"))
+            else: write(f_row1 + BOLD_ON + enc(f"{riga1}\n") + BOLD_OFF)
             write(f_row2 + BOLD_ON + enc(f"{cliente_nome[:15].upper()}\n") + BOLD_OFF)
-            
             riga_capo = f"{item['nome'][:18]} ({i}/{tot})"
             riga_completa = f"{riga_capo} R:{data_ritiro_str}"
             write(f_row3 + BOLD_ON + enc(f"{riga_completa}\n") + BOLD_OFF)
-            
             write(b'\x1bd' + bytes([feed_lines])) 
             write(CMD_CUT)
-        
         close()
         return True
-    except Exception as e: 
-        print(f"Errore stampa etichette: {e}")
-        return False
+    except Exception as e: return False
 
-# --- STAMPA SCONTRINO ---
 def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo):
     stampante = get_setting("printer_star")
     header_text = get_setting("ticket_header")
@@ -247,33 +216,23 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
     S_ITEM = get_star_font(get_setting("font_items") or "norm")
     S_TOT  = get_star_font(get_setting("font_total") or "huge") 
     S_FOOT = get_star_font(get_setting("font_footer") or "norm")
-    
-    S_NORM = get_star_font("norm")
-    S_WIDE = get_star_font("wide")
+    S_NORM = get_star_font("norm"); S_WIDE = get_star_font("wide")
 
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("Scontrino", None, "RAW")); win32print.StartPagePrinter(hPrinter)
-            ALIGN_CENTER = b'\x1b\x1d\x61\x01'
-            ALIGN_LEFT   = b'\x1b\x1d\x61\x00'
-            BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'
-            CUT = b'\x1bd\x02'
-            CMD_LOGO = b'\x1b\x1c\x70\x01\x00\r\n' 
-            CMD_CP858 = b'\x1b\x1d\x74\x04'; EURO = b'\xd5' 
+            ALIGN_CENTER = b'\x1b\x1d\x61\x01'; ALIGN_LEFT = b'\x1b\x1d\x61\x00'
+            BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_LOGO = b'\x1b\x1c\x70\x01\x00\r\n'; CMD_CP858 = b'\x1b\x1d\x74\x04'; EURO = b'\xd5' 
             def enc(txt): return txt.encode('cp858', errors='replace')
-
             buffer = b'\x1b@' + CMD_CP858 
             if print_logo: buffer += ALIGN_CENTER + CMD_LOGO + ALIGN_LEFT
-            
             buffer += ALIGN_CENTER + S_HEAD + BOLD_ON
             if header_text:
                 for r in header_text.split('\n'): buffer += enc(r) + b"\n"
             buffer += BOLD_OFF + S_NORM + ALIGN_LEFT + b"-" * 42 + b"\n"
-            
             buffer += ALIGN_CENTER + S_NUM + BOLD_ON + enc(f"{num_visibile}\n") + BOLD_OFF + S_NORM + enc(f"Data: {data}\n") + ALIGN_LEFT
             buffer += ALIGN_CENTER + S_CUST + BOLD_ON + enc(f"{cliente_nome[:20]}\n") + BOLD_OFF + S_NORM + ALIGN_LEFT + b"-" * 42 + b"\n"
-            
             buffer += S_ITEM
             num_capi_tot = 0
             for item in carrello:
@@ -281,13 +240,10 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
                 nome = item['nome'][:25]; prezzo = f"{item['prezzo']:.2f}"
                 spazi = " " * (38 - len(nome) - len(prezzo) - 1)
                 buffer += enc(f"{nome}{spazi}{prezzo}") + EURO + b"\n"
-            
             buffer += S_NORM + b"-" * 42 + b"\n"
             if sconto > 0: buffer += enc(f"SCONTO APPLICATO: -{sconto:.2f}") + EURO + b"\n"
-            
             buffer += ALIGN_CENTER + S_WIDE + enc(f"N. Capi: {num_capi_tot}\n")
             buffer += S_TOT + BOLD_ON + enc(f"TOT: {totale:.2f}") + EURO + b"\n" + BOLD_OFF + S_WIDE + b"DA PAGARE\n" + S_NORM + ALIGN_LEFT
-            
             if acconto > 0:
                 residuo = max(0, totale - acconto)
                 buffer += enc(f"ACCONTO: {acconto:.2f}") + EURO + enc(f" ({metodo})\n")
@@ -295,14 +251,11 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
                 else: buffer += ALIGN_CENTER + S_WIDE + b"SALDATO\n" + S_NORM + ALIGN_LEFT
             else:
                 if pagato: buffer += ALIGN_CENTER + S_WIDE + enc(f"PAGATO ({metodo})\n") + S_NORM + ALIGN_LEFT
-            
             buffer += b"\n" + ALIGN_CENTER + S_NORM + BOLD_ON + enc(f"Ritiro dal: {data_ritiro_str}\n") + BOLD_OFF
-            
             buffer += ALIGN_CENTER + S_FOOT
             if footer_text:
                 for r in footer_text.split('\n'): buffer += enc(r) + b"\n"
             buffer += ALIGN_LEFT + b"\n\n\n\n\n" + CUT
-            
             win32print.WritePrinter(hPrinter, buffer)
             win32print.EndPagePrinter(hPrinter); win32print.EndDocPrinter(hPrinter)
         finally: win32print.ClosePrinter(hPrinter)
@@ -318,7 +271,6 @@ def home():
 @app.route('/api/get_listino_raw')
 def api_get_listino_raw():
     conn = get_db(); cursor = conn.cursor()
-    # Recupera anche il tipo_stoccaggio
     cursor.execute("SELECT * FROM listino ORDER BY ordine ASC")
     items = [dict(row) for row in cursor.fetchall()]; conn.close()
     return jsonify(items)
@@ -332,26 +284,20 @@ def api_aggiorna_ordine_listino():
             cursor.execute("UPDATE listino SET ordine = ? WHERE id = ?", (index, item_id))
         conn.commit()
         return jsonify({'status': 'success'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'msg': str(e)})
-    finally:
-        conn.close()
+    except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
+    finally: conn.close()
 
 @app.route('/api/save_item_listino', methods=['POST'])
 def api_save_item_listino():
     d = request.json; conn = get_db(); cursor = conn.cursor()
-    # Default Nastro se non specificato
     tipo = d.get('tipo_stoccaggio', 'Nastro')
-    
     if 'id' in d and d['id']: 
-        cursor.execute("UPDATE listino SET categoria=?, capo=?, prezzo=?, tipo_stoccaggio=? WHERE id=?", 
-                       (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, d['id']))
+        cursor.execute("UPDATE listino SET categoria=?, capo=?, prezzo=?, tipo_stoccaggio=? WHERE id=?", (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, d['id']))
     else: 
         cursor.execute("SELECT MAX(ordine) FROM listino")
         max_order = cursor.fetchone()[0]
         next_order = (max_order + 1) if max_order is not None else 0
-        cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", 
-                       (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, next_order))
+        cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, next_order))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
 @app.route('/api/delete_item_listino', methods=['POST'])
@@ -435,8 +381,6 @@ def crea_cliente():
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
     q = request.args.get('q', ''); cliente_id = request.args.get('cliente_id', ''); conn = get_db(); cursor = conn.cursor()
-    # Aggiunto tipo_stoccaggio nella query dei dettagli (recuperato tramite posizioni)
-    # Nota: la query qui recupera testate d'ordine, i dettagli specifici li prendiamo in get_dettagli_ordine
     sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
     conditions = []
     if cliente_id: conditions.append(f"o.cliente_id = {cliente_id}")
@@ -452,125 +396,82 @@ def cerca_ordini_aperti():
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
     cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone(); info = {'totale_ordine': res[0], 'totale_versato': res[1], 'fiscale_emesso': res[2], 'fiscale_desk': res[3]}
-    # Recupera anche tipo_stoccaggio
     cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
 
+# --- MODIFICA FONDAMENTALE PER PAGAMENTO RICONSEGNA ---
 @app.route('/consegna_items', methods=['POST'])
 def consegna_items():
-    ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
+    ids = request.json.get('ids', [])
+    incasso = float(request.json.get('incasso', 0))
+    sconto_extra = float(request.json.get('sconto_extra', 0))
+    richiesta_fiscale = request.json.get('stampa_fiscale', False)
+    metodo = request.json.get('metodo_pagamento', '') # NUOVO PARAMETRO
+    
+    conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
+    
     for item_id in ids:
-        cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,)); cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
+        cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,))
+        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,))
+        capi_ritirati.append(dict(cursor.fetchone()))
+    
     msg = "Nessuna stampa."
     if ids:
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); ordine_id = cursor.fetchone()[0]
-        if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
-        if incasso > 0: cursor.execute("UPDATE ordini SET acconto = acconto + ? WHERE id = ?", (incasso, ordine_id))
-        cursor.execute("SELECT totale, acconto FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
-        if r['acconto'] >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
-        cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,)); 
-        if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
+        ordine_id = cursor.fetchone()[0]
+        
+        if sconto_extra > 0: 
+            cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
+        
+        # AGGIORNAMENTO INCASSO E METODO PAGAMENTO
+        if incasso > 0: 
+            if metodo:
+                 cursor.execute("UPDATE ordini SET acconto = acconto + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
+            else:
+                 cursor.execute("UPDATE ordini SET acconto = acconto + ? WHERE id = ?", (incasso, ordine_id))
+
+        # Controllo se tutto saldato
+        cursor.execute("SELECT totale, acconto FROM ordini WHERE id = ?", (ordine_id,))
+        r = cursor.fetchone()
+        if r['acconto'] >= r['totale'] - 0.01: 
+            cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
+            
+        # Controllo se tutto consegnato
+        cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
+        if cursor.fetchone()[0] == 0: 
+            cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
+            
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,)); msg = "✅ Scontrino Fiscale Stampato!"
+            
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
-@app.route('/salva_ordine', methods=['POST'])
-def salva_ordine():
-    d = request.json; listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    carrello, data_ritiro_raw = d['carrello'], d['data_ritiro']
-    sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
-    pagato, metodo = d['pagato'], d['metodo']
-    dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
-    data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
-    totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
-    solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
-    if acconto >= totale: pagato = True
-    else: pagato = False
-    if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
-    
-    conn = get_db(); cursor = conn.cursor()
-    last_reset = get_setting("last_reset_date")
-    cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
-    
-    stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
-    if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
-    fiscale_desk_val = 1 if stampa_ora else 0
-    
-    cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione'))
-    oid = cursor.lastrowid
-    stato_lavorazione = 1 if solo_prodotti else 0
-    
-    # ⚠️ RECUPERO ID REALE CAPO e TIPO STOCCAGGIO ⚠️
-    items_con_id = []
-    for i in carrello: 
-        # Cerca il tipo di stoccaggio nel listino
-        cursor.execute("SELECT tipo_stoccaggio FROM listino WHERE capo = ?", (i['nome'],))
-        res = cursor.fetchone()
-        tipo_stoccaggio = res[0] if res else 'Nastro' # Default Nastro se non trovato
-        
-        cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione, tipo_stoccaggio) VALUES (?, ?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione, tipo_stoccaggio))
-        item_id = cursor.lastrowid
-        # Oggetto completo con ID per stampa etichetta
-        capo_con_id = i.copy()
-        capo_con_id['id'] = item_id
-        items_con_id.append(capo_con_id)
-        
-    conn.commit(); conn.close()
-    
-    if not solo_prodotti: 
-        stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo)
-        # Passiamo la lista con gli ID reali
-        stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
-        
-    if stampa_ora: 
-        # stampa_fiscale(carrello, sconto) 
-        pass
-    return jsonify({"status": "success", "id_ordine": oid})
-
-@app.route('/sospendi_ordine', methods=['POST'])
-def sospendi_ordine():
-    d=request.json; conn=get_db(); cursor=conn.cursor()
-    cursor.execute("INSERT INTO ordini (cliente_id, data_ingresso, data_ritiro, totale, stato, sede) VALUES (?, ?, ?, ?, 'Sospeso', ?)", (d['cliente_id'], datetime.now(), d['data_ritiro'], 0, SEDE))
-    oid=cursor.lastrowid
-    for i in d['carrello']: cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo) VALUES (?, ?, ?)", (oid, i['nome'], i['prezzo']))
-    conn.commit(); conn.close(); return jsonify({'status': 'success'})
-
-@app.route('/recupera_sospesi')
-def recupera_sospesi():
-    conn=get_db(); cursor=conn.cursor()
-    cursor.execute("SELECT o.id, c.nome, c.cognome, o.data_ingresso FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE o.stato = 'Sospeso' ORDER BY o.id DESC")
-    r=[dict(x) for x in cursor.fetchall()]; conn.close(); return jsonify(r)
-
-@app.route('/carica_sospeso', methods=['POST'])
-def carica_sospeso():
-    oid=request.json['id']; conn=get_db(); cursor=conn.cursor()
-    cursor.execute("SELECT * FROM ordini WHERE id=?",(oid,)); o=dict(cursor.fetchone())
-    cursor.execute("SELECT * FROM clienti WHERE id=?",(o['cliente_id'],)); c=dict(cursor.fetchone()); c['nome_completo']=f"{c['nome']} {c['cognome'] or ''}".strip()
-    cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id=?",(oid,)); l=[dict(x) for x in cursor.fetchall()]
-    cursor.execute("DELETE FROM dettagli_ordine WHERE ordine_id=?",(oid,)); cursor.execute("DELETE FROM ordini WHERE id=?",(oid,)); conn.commit(); conn.close()
-    return jsonify({'cliente':c, 'carrello':l, 'data_ritiro':o['data_ritiro']})
-
-@app.route('/get_items_scontrino', methods=['POST'])
-def get_items_scontrino():
-    tipo = request.json.get('tipo'); valore = request.json.get('valore'); conn = get_db(); cursor = conn.cursor()
-    target_item_id = None; order_id = None
-    if tipo == 'ordine':
-        cursor.execute("SELECT id FROM ordini WHERE num_scontrino = ? AND stato != 'Consegnato'", (valore,)); res = cursor.fetchone()
-        if res: order_id = res[0]
-    elif tipo == 'capo':
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ? AND ritirato = 0", (valore,)); res = cursor.fetchone()
-        if res: order_id = res[0]; target_item_id = int(valore)
-    if not order_id: conn.close(); return jsonify({'status': 'error', 'msg': 'Nessun risultato trovato.'})
-    cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (order_id,)); capi = [dict(row) for row in cursor.fetchall()]; conn.close()
-    return jsonify({'status': 'success', 'items': capi, 'ordine_id': order_id, 'target_item_id': target_item_id})
-
+# --- NUOVA FUNZIONE CON CONTROLLO COLLISIONI ---
 @app.route('/conferma_pronti', methods=['POST'])
 def conferma_pronti():
-    ids = request.json.get('ids', []); oid = request.json.get('ordine_id'); catena = request.json.get('catena', ''); conn = get_db(); cursor = conn.cursor()
+    ids = request.json.get('ids', [])
+    oid = request.json.get('ordine_id')
+    catena = request.json.get('catena', '')
+    conn = get_db(); cursor = conn.cursor()
+
+    if catena and ids:
+        placeholders = ','.join(['?']*len(ids))
+        cursor.execute(f"SELECT DISTINCT tipo_stoccaggio FROM dettagli_ordine WHERE id IN ({placeholders})", ids)
+        types = [row[0] for row in cursor.fetchall()]
+
+        for t in types:
+            sql_check = """SELECT o.num_scontrino FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE d.numero_catena = ? AND d.tipo_stoccaggio = ? AND d.ritirato = 0 AND d.ordine_id != ? LIMIT 1"""
+            cursor.execute(sql_check, (catena, t, oid))
+            conflict = cursor.fetchone()
+            if conflict:
+                conn.close()
+                return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena} ({t}) OCCUPATA dall'ordine #{conflict[0]}!"})
+
     if ids:
         pl = ','.join(['?']*len(ids)); cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ? AND id NOT IN ({pl})", [oid] + ids)
         cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena] + ids)
     else: cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
+    
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
 @app.route('/modifica_capo_ordine', methods=['POST'])
