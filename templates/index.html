@@ -85,13 +85,13 @@
             <div class="card p-3 mb-3 shadow-sm border-0">
                 <div class="row align-items-end">
                     <div class="col-md-5">
-                         <label class="form-label text-muted small fw-bold">CLIENTE</label>
-                         <div class="input-group">
+                          <label class="form-label text-muted small fw-bold">CLIENTE</label>
+                          <div class="input-group">
                              <input type="text" id="cerca" class="form-control form-control-lg fw-bold border-primary" placeholder="Cerca Nome..." autocomplete="off">
                              <button class="btn btn-warning" onclick="clienteRapido()" title="Vendita al Banco">⚡ RAPIDO</button>
-                         </div>
-                         <ul id="lista-ricerca" class="list-group position-absolute w-50 shadow" style="z-index:1000"></ul>
-                         <div id="cliente-selezionato" class="alert alert-success mt-2 p-2 mb-0 shadow-sm d-flex justify-content-between align-items-center" style="display:none;">
+                          </div>
+                          <ul id="lista-ricerca" class="list-group position-absolute w-50 shadow" style="z-index:1000"></ul>
+                          <div id="cliente-selezionato" class="alert alert-success mt-2 p-2 mb-0 shadow-sm d-flex justify-content-between align-items-center" style="display:none;">
                             <div><i class="bi bi-person-check-fill"></i> <strong><span id="nome-cli"></span></strong></div>
                             <button class="btn btn-sm btn-outline-danger" onclick="resetCliente()">Cambia</button>
                         </div>
@@ -152,7 +152,8 @@
         <h3>📤 Riconsegna</h3>
         <div class="position-relative">
             <input type="text" id="cerca-consegna" class="form-control mb-3 form-control-lg border-primary fw-bold" placeholder="🔍 Cerca Cliente o N. Scontrino..." autocomplete="off">
-            <ul id="suggerimenti-consegna" class="list-group position-absolute w-100 shadow" style="z-index:1000; top: 50px;"></ul>
+            <small class="text-muted">Seleziona un cliente e premi <strong>F1</strong> per vedere tutto lo storico.</small>
+            <ul id="suggerimenti-consegna" class="list-group position-absolute w-100 shadow" style="z-index:1000; top: 60px;"></ul>
         </div>
         <table class="table table-striped table-hover align-middle" id="table-consegna">
             <thead class="table-dark">
@@ -214,6 +215,21 @@
 </div>
 
 <div class="modal fade" id="modalSceltaOrdine" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">Scegli Ordine da Ritirare</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div id="lista-ordini-scelta" class="list-group"></div></div></div></div></div>
+
+<div class="modal fade" id="modalStorico" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title">📜 Storico Cliente (Completati)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small">Visualizzazione dal più vecchio al più recente. Esclusi ordini ancora in carico.</p>
+                <div id="contenuto-storico"></div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="modal fade" id="modalConsegna" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -465,11 +481,12 @@
     let listinoRaw = []; 
     let sortableInstance = null;
     let metodoConsegnaScelto = 'Contanti';
+    let currentDeliveryClientId = null; // Memorizza l'ID del cliente selezionato nella Riconsegna
 
     async function initCalendar() { try { const res = await fetch('/api/carico_lavoro'); caricoLavoro = await res.json(); picker = flatpickr("#data-ritiro", { locale: "it", dateFormat: "d/m", defaultDate: new Date().fp_incr(3), minDate: "today", disable: [ function(date) { if (date.getDay() === 0) return true; let dm = date.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}).replace('/', '-'); let fullDate = date.toISOString().split('T')[0]; return festivita.includes(dm) || festivita.includes(fullDate); } ], onDayCreate: function(dObj, dStr, fp, dayElem) { let key = dayElem.dateObj.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}); if (dayElem.classList.contains("flatpickr-disabled")) { dayElem.classList.add("festivo"); } if (caricoLavoro[key]) { dayElem.innerHTML += `<span class='capi-counter'>${caricoLavoro[key]}</span>`; } } }); } catch (e) { console.error("Errore Calendario:", e); } }
 
     function vaiRicezione() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-ricezione').classList.remove('hidden'); initCalendar(); }
-    function vaiConsegna() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-consegna').classList.remove('hidden'); document.getElementById('tabella-ordini').innerHTML=''; document.getElementById('cerca-consegna').value=''; document.getElementById('cerca-consegna').focus(); }
+    function vaiConsegna() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-consegna').classList.remove('hidden'); document.getElementById('tabella-ordini').innerHTML=''; document.getElementById('cerca-consegna').value=''; document.getElementById('cerca-consegna').focus(); currentDeliveryClientId = null; }
     function vaiPronti() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('input-pronti-scontrino').value=''; document.getElementById('input-pronti-capo').value=''; document.getElementById('input-catena').value=''; document.getElementById('box-lista-pronti').style.display='none'; document.getElementById('input-pronti-scontrino').focus(); }
     function vaiHome() { document.getElementById('view-ricezione').classList.add('hidden'); document.getElementById('view-consegna').classList.add('hidden'); document.getElementById('view-pronti').classList.add('hidden'); document.getElementById('view-home').classList.remove('hidden'); resetCliente(); }
 
@@ -541,8 +558,55 @@
 
     // --- RICONSEGNA E RISTAMPA ---
     let focusConsegna = -1;
-    document.getElementById('cerca-consegna').addEventListener('input', async function() { focusConsegna = -1; const val = this.value; const list = document.getElementById('suggerimenti-consegna'); const tableBody = document.getElementById('tabella-ordini'); list.innerHTML = ''; if (!val) { tableBody.innerHTML = ''; return; } if (val.match(/^\d+$/)) { cercaOrdini(val); list.innerHTML = ''; } else { const res = await fetch(`/cerca_cliente?q=${val}`); const data = await res.json(); data.forEach(c => { let li = document.createElement('li'); li.className = "list-group-item list-group-item-action"; li.innerHTML = `<strong>${c.nome_completo}</strong>`; li.onclick = () => { document.getElementById('cerca-consegna').value = c.nome_completo; list.innerHTML = ''; cercaOrdini(null, c.id); }; list.appendChild(li); }); } });
+    document.getElementById('cerca-consegna').addEventListener('input', async function() { focusConsegna = -1; currentDeliveryClientId = null; const val = this.value; const list = document.getElementById('suggerimenti-consegna'); const tableBody = document.getElementById('tabella-ordini'); list.innerHTML = ''; if (!val) { tableBody.innerHTML = ''; return; } if (val.match(/^\d+$/)) { cercaOrdini(val); list.innerHTML = ''; } else { const res = await fetch(`/cerca_cliente?q=${val}`); const data = await res.json(); data.forEach(c => { let li = document.createElement('li'); li.className = "list-group-item list-group-item-action"; li.innerHTML = `<strong>${c.nome_completo}</strong>`; li.onclick = () => { document.getElementById('cerca-consegna').value = c.nome_completo; currentDeliveryClientId = c.id; list.innerHTML = ''; cercaOrdini(null, c.id); }; list.appendChild(li); }); } });
     document.getElementById('cerca-consegna').addEventListener('keydown', function(e) { let x = document.getElementById('suggerimenti-consegna').getElementsByTagName('li'); if (x.length > 0) { handleArrowNav(e, 'suggerimenti-consegna', idx => { focusConsegna = idx; }, focusConsegna); } else if (e.key === 'Enter') { const val = this.value; if(val.match(/^\d+$/)) cercaOrdini(val); } });
+
+    // --- GESTORE TASTO F1 ---
+    document.addEventListener('keydown', function(e) { 
+        if (e.key === 'F1') {
+            e.preventDefault();
+            if (!document.getElementById('view-consegna').classList.contains('hidden') && currentDeliveryClientId) {
+                apriStoricoCliente(currentDeliveryClientId);
+            }
+        }
+    });
+
+    async function apriStoricoCliente(clienteId) {
+        try {
+            const res = await fetch(`/api/storico_cliente/${clienteId}`);
+            const ordini = await res.json();
+            const div = document.getElementById('contenuto-storico');
+            div.innerHTML = '';
+
+            if (ordini.length === 0) {
+                div.innerHTML = '<div class="alert alert-info">Nessun ordine completato nello storico per questo cliente.</div>';
+            } else {
+                ordini.forEach(o => {
+                    let itemsHtml = '';
+                    o.capi.forEach(c => {
+                        itemsHtml += `<span class="badge bg-secondary me-1 mb-1">${c.capo} (${c.prezzo.toFixed(2)}€)</span>`;
+                    });
+
+                    div.innerHTML += `
+                        <div class="card mb-3 shadow-sm">
+                            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                                <span class="fw-bold">Ordine #${o.num_scontrino}</span>
+                                <span class="text-muted small">Ingresso: ${new Date(o.data_ingresso).toLocaleDateString()}</span>
+                            </div>
+                            <div class="card-body">
+                                <div>${itemsHtml}</div>
+                                <hr class="my-2">
+                                <div class="text-end fw-bold text-success">Totale: € ${o.totale.toFixed(2)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            new bootstrap.Modal(document.getElementById('modalStorico')).show();
+        } catch (e) {
+            alert("Errore caricamento storico.");
+        }
+    }
 
     let currentOrdRow = -1;
     document.addEventListener('keydown', function(e) { 
@@ -628,7 +692,7 @@
             let statoLav = o.tutto_pronto ? '<span class="badge bg-success">🟢 PRONTO</span>' : '<span class="badge bg-warning text-dark">🟡 IN LAV.</span>';
 
             tb.innerHTML+=`<tr>
-                <td><strong>#${o.num_scontrino}</strong></td>
+                <td><strong>${o.num_scontrino}</strong></td>
                 <td>${o.data_ritiro}</td>
                 <td>${o.cliente_nome}</td>
                 <td>${statoLav}</td>
@@ -701,7 +765,7 @@
         // Tasto stampa singola etichetta
         let printSingleBtn = `<button class="btn btn-sm btn-outline-secondary ms-2" onclick="stampaSingolaEtichetta(${c.id})" title="Stampa Etichetta Singola"><i class="bi bi-tag-fill"></i></button>`;
 
-        ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[Cod: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}${printSingleBtn}</div></li>`; }); calcolaSaldoParziale(); }
+        ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[ID: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}${printSingleBtn}</div></li>`; }); calcolaSaldoParziale(); }
     
     async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
 

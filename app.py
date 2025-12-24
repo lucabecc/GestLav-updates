@@ -4,11 +4,11 @@ import os
 from datetime import datetime
 import win32print
 import serial
-import socket 
+import socket
 import time
 import urllib.request
 import urllib.error
-import shutil 
+import shutil
 
 # --- CONFIGURAZIONE PERCORSI ASSOLUTI ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,12 +21,12 @@ SEDE = "FALCONARA"
 DB_NAME = "lavanderia.db"
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
-GITHUB_USER = "lucabecc" 
+GITHUB_USER = "lucabecc"
 GITHUB_REPO_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/GestLav-updates/main/"
 
 FESTIVITA = [
     "01-01", "06-01", "25-04", "01-05", "02-06", "15-08", "01-11", "08-12", "25-12", "26-12",
-    "2025-08-10", "2025-08-11", "2025-08-12" 
+    "2025-08-10", "2025-08-11", "2025-08-12"
 ]
 
 LISTINO_DEFAULT = [
@@ -83,7 +83,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")           
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")            
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -670,6 +670,39 @@ def ristampa_ordine():
 
     except Exception as e:
         return jsonify({'status': 'error', 'msg': str(e)})
+
+@app.route('/api/storico_cliente/<int:cliente_id>')
+def storico_cliente(cliente_id):
+    # Recupera tutto lo storico dal più vecchio al più recente, ESCLUDENDO quelli ancora attivi (quindi solo stato 'Consegnato')
+    conn = get_db(); cursor = conn.cursor()
+    # Query: Recupera scontrini consegnati per quel cliente
+    cursor.execute("""
+        SELECT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, 
+        d.capo, d.prezzo 
+        FROM ordini o 
+        JOIN dettagli_ordine d ON o.id = d.ordine_id 
+        WHERE o.cliente_id = ? AND o.stato = 'Consegnato' 
+        ORDER BY o.data_ingresso ASC
+    """, (cliente_id,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Raggruppa per ordine
+    storico = {}
+    for r in rows:
+        oid = r['id']
+        if oid not in storico:
+            storico[oid] = {
+                'num_scontrino': r['num_scontrino'],
+                'data_ingresso': r['data_ingresso'],
+                'data_ritiro': r['data_ritiro'],
+                'totale': r['totale'],
+                'capi': []
+            }
+        storico[oid]['capi'].append({'capo': r['capo'], 'prezzo': r['prezzo']})
+        
+    return jsonify(list(storico.values()))
 
 if __name__ == '__main__': 
     init_db()
