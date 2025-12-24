@@ -30,6 +30,7 @@
         #lista-ricerca .list-group-item { cursor: pointer; }
         .active-suggestion { background-color: #0d6efd; color: white; }
         .table-active-row { background-color: #e2e6ea !important; border: 2px solid #0d6efd; }
+        .item-active-focus { background-color: #e7f1ff; border-left: 5px solid #0d6efd; }
         .flatpickr-day { position: relative; }
         .flatpickr-day.festivo { background-color: #ffcccc; color: #cc0000; border: 1px solid #cc0000; }
         .capi-counter { display: none; position: absolute; top: -5px; right: -5px; font-size: 0.8rem; color: white; font-weight: bold; background-color: #dc3545; padding: 2px 6px; border-radius: 10px; z-index: 10; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); }
@@ -250,8 +251,11 @@
                 </div>
 
                 <div class="row g-2">
-                    <div class="col-6"><button class="btn btn-secondary w-100 py-3 fw-bold" onclick="confermaConsegna(false)">📦 CONSEGNA (NO Scontrino)</button></div>
+                    <div class="col-6"><button id="btn-consegna-no-fisc" class="btn btn-secondary w-100 py-3 fw-bold" onclick="confermaConsegna(false)">📦 CONSEGNA (NO Scontrino)</button></div>
                     <div class="col-6"><button id="btn-consegna-fiscale" class="btn btn-success w-100 py-3 fw-bold" onclick="confermaConsegna(true)">🖨️ CONSEGNA + FISCALE</button></div>
+                </div>
+                <div class="text-center mt-2 text-muted small">
+                    <i class="bi bi-arrow-up-down"></i> Frecce: Seleziona Capo | SPAZIO: Check | P: Stampa Etichetta | INVIO: Conferma
                 </div>
             </div>
         </div>
@@ -460,6 +464,7 @@
     let lastSearchQuery = { type: null, val: null }; 
     let listinoRaw = []; 
     let sortableInstance = null;
+    let metodoConsegnaScelto = 'Contanti';
 
     async function initCalendar() { try { const res = await fetch('/api/carico_lavoro'); caricoLavoro = await res.json(); picker = flatpickr("#data-ritiro", { locale: "it", dateFormat: "d/m", defaultDate: new Date().fp_incr(3), minDate: "today", disable: [ function(date) { if (date.getDay() === 0) return true; let dm = date.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}).replace('/', '-'); let fullDate = date.toISOString().split('T')[0]; return festivita.includes(dm) || festivita.includes(fullDate); } ], onDayCreate: function(dObj, dStr, fp, dayElem) { let key = dayElem.dateObj.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}); if (dayElem.classList.contains("flatpickr-disabled")) { dayElem.classList.add("festivo"); } if (caricoLavoro[key]) { dayElem.innerHTML += `<span class='capi-counter'>${caricoLavoro[key]}</span>`; } } }); } catch (e) { console.error("Errore Calendario:", e); } }
 
@@ -540,8 +545,78 @@
     document.getElementById('cerca-consegna').addEventListener('keydown', function(e) { let x = document.getElementById('suggerimenti-consegna').getElementsByTagName('li'); if (x.length > 0) { handleArrowNav(e, 'suggerimenti-consegna', idx => { focusConsegna = idx; }, focusConsegna); } else if (e.key === 'Enter') { const val = this.value; if(val.match(/^\d+$/)) cercaOrdini(val); } });
 
     let currentOrdRow = -1;
-    document.addEventListener('keydown', function(e) { if(document.activeElement.id === 'cerca-consegna') return; let rows = document.querySelectorAll('#tabella-ordini tr'); if(rows.length === 0) return; if (e.key === 'ArrowDown') { currentOrdRow++; highlightRow(rows); } else if (e.key === 'ArrowUp') { currentOrdRow--; highlightRow(rows); } else if (e.key === 'Enter') { e.preventDefault(); if (currentOrdRow > -1 && rows[currentOrdRow]) rows[currentOrdRow].querySelector('button').click(); } });
+    document.addEventListener('keydown', function(e) { 
+        // Se siamo nel Modal, gestiamo la navigazione interna
+        if (document.getElementById('modalConsegna').classList.contains('show')) {
+            handleModalKeyNav(e);
+            return;
+        }
+
+        if(document.activeElement.id === 'cerca-consegna') return; 
+        let rows = document.querySelectorAll('#tabella-ordini tr'); 
+        if(rows.length === 0) return; 
+        if (e.key === 'ArrowDown') { currentOrdRow++; highlightRow(rows); } 
+        else if (e.key === 'ArrowUp') { currentOrdRow--; highlightRow(rows); } 
+        else if (e.key === 'Enter') { e.preventDefault(); if (currentOrdRow > -1 && rows[currentOrdRow]) rows[currentOrdRow].querySelector('button').click(); } 
+    });
     function highlightRow(rows) { rows.forEach(r => r.classList.remove('table-active-row')); if (currentOrdRow >= rows.length) currentOrdRow = 0; if (currentOrdRow < 0) currentOrdRow = (rows.length - 1); rows[currentOrdRow].classList.add('table-active-row'); rows[currentOrdRow].scrollIntoView({block: 'nearest'}); }
+
+    let modalFocusIndex = -1;
+    function handleModalKeyNav(e) {
+        // Ignora se siamo su input di sconto o edit
+        if(e.target.tagName === 'INPUT') return;
+
+        const items = document.querySelectorAll('#cons-lista li');
+        if(items.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            modalFocusIndex++;
+            if (modalFocusIndex >= items.length) modalFocusIndex = 0;
+            updateModalFocus(items);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            modalFocusIndex--;
+            if (modalFocusIndex < 0) modalFocusIndex = items.length - 1;
+            updateModalFocus(items);
+        } else if (e.key === ' ') { // Spazio per check/uncheck
+            e.preventDefault();
+            if(modalFocusIndex > -1) {
+                const chk = items[modalFocusIndex].querySelector('.chk-ritiro');
+                if(!chk.disabled) {
+                    chk.checked = !chk.checked;
+                    calcolaSaldoParziale();
+                }
+            }
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            // Clicca il tasto verde di conferma fiscale o normale in base a visibilità
+            const btnFisc = document.getElementById('btn-consegna-fiscale');
+            const btnNorm = document.getElementById('btn-consegna-no-fisc');
+            if(btnFisc.offsetParent !== null) btnFisc.click();
+            else btnNorm.click();
+        } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            // Seleziona metodo di pagamento se visibile
+            if(document.getElementById('box-metodi-consegna').style.display !== 'none') {
+                const cur = metodoConsegnaScelto;
+                selectMetodoConsegna(cur === 'Contanti' ? 'Carta' : 'Contanti');
+            }
+        } else if (e.key.toLowerCase() === 'p') {
+             // Stampa singola etichetta del capo selezionato
+             if(modalFocusIndex > -1) {
+                const chk = items[modalFocusIndex].querySelector('.chk-ritiro');
+                stampaSingolaEtichetta(chk.value);
+            }
+        }
+    }
+
+    function updateModalFocus(items) {
+        items.forEach(i => i.classList.remove('item-active-focus'));
+        if(modalFocusIndex > -1 && items[modalFocusIndex]) {
+            items[modalFocusIndex].classList.add('item-active-focus');
+            items[modalFocusIndex].scrollIntoView({block: 'nearest'});
+        }
+    }
 
     async function cercaOrdini(numScontrino = null, clienteId = null) { 
         let url = `/cerca_ordini_aperti?`; if (numScontrino) url += `q=${numScontrino}`; if (clienteId) url += `cliente_id=${clienteId}`; 
@@ -569,7 +644,6 @@
         currentOrdRow = -1; 
     }
 
-    // --- NUOVA FUNZIONE RISTAMPA ---
     async function ristampaOrdine(id, tipo) {
         if(!confirm(`Vuoi ristampare ${tipo.toUpperCase()}?`)) return;
         try {
@@ -588,11 +662,15 @@
 
     async function apriDettaglioConsegna(id, nome, num) { 
         ordineConsegnaId = id; document.getElementById('cons-id').innerText = num; document.getElementById('cons-cliente').innerText = nome; document.getElementById('sconto-consegna').value = 0; 
+        
+        // Reset metodi
+        metodoConsegnaScelto = 'Contanti';
+        selectMetodoConsegna('Contanti');
+
         const res = await fetch(`/get_dettagli_ordine/${id}`); const data = await res.json(); cacheCapiConsegna = data.capi; cacheInfoOrdine = data.info; 
         const btnFiscale = document.getElementById('btn-consegna-fiscale'); 
         if(data.info.fiscale_desk === 1) btnFiscale.style.display = 'none'; else btnFiscale.style.display = 'block'; 
 
-        // GESTIONE BOTTONE TOGGLE PAGAMENTO
         const btnToggle = document.getElementById('btn-toggle-pay');
         if (data.info.pagato) { btnToggle.innerText = "Segna come NON PAGATO"; btnToggle.className = "btn btn-outline-danger fw-bold btn-sm"; } 
         else { btnToggle.innerText = "Segna come PAGATO"; btnToggle.className = "btn btn-outline-success fw-bold btn-sm"; }
@@ -600,34 +678,106 @@
         renderConsegnaList(); 
         if(!modalConsegnaObj) modalConsegnaObj = new bootstrap.Modal(document.getElementById('modalConsegna')); 
         modalConsegnaObj.show(); 
+        modalFocusIndex = -1; // Reset navigazione tastiera
+
         document.getElementById('modalConsegna').addEventListener('hidden.bs.modal', function () {
             if(!document.getElementById('view-consegna').classList.contains('hidden')) { if(lastSearchQuery.type === 'num') cercaOrdini(lastSearchQuery.val, null); else if(lastSearchQuery.type === 'id') cercaOrdini(null, lastSearchQuery.val); }
             else if(clienteCorrente) { selezionaCliente(clienteCorrente); }
         }, { once: true });
     }
     
-    // --- NUOVA FUNZIONE TOGGLE PAGAMENTO ---
     async function toggleStatoPagamento() {
         if(!confirm("Vuoi cambiare lo stato del pagamento (Pagato <-> Da Pagare)?")) return;
         await fetch('/api/toggle_stato_pagamento', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ordine_id: ordineConsegnaId})});
         bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide();
-        cercaOrdini(document.getElementById('cons-id').innerText); // Ricarica tabella
+        cercaOrdini(document.getElementById('cons-id').innerText); 
     }
 
     function renderConsegnaList() { const ul = document.getElementById('cons-lista'); ul.innerHTML = ''; cacheCapiConsegna.forEach(c => { let checked = c.ritirato ? 'checked disabled' : ''; let label = c.ritirato ? '(Già Ritirato)' : ''; let editBtn = !c.ritirato ? `<button class="btn btn-sm btn-outline-warning ms-2" onclick="apriEditCapo(${c.id}, '${c.capo}', ${c.prezzo})">✏️</button>` : ''; 
         let tappetoInput = ''; if(c.capo.toLowerCase().includes('tappeto') && !c.ritirato) { tappetoInput = `<div class="input-group input-group-sm mt-1" style="width: 150px;"><span class="input-group-text fw-bold">KG</span><input type="number" class="form-control fw-bold" placeholder="0.0" step="0.1" onchange="aggiornaPrezzoTappeto(${c.id}, this.value)"></div>`; }
         let statusDot = c.stato_lavorazione ? '<span class="status-dot status-verde"></span>' : '<span class="status-dot status-giallo"></span>'; 
         let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena} (${c.tipo_stoccaggio || 'Nastro'})</span>` : ''; 
-        ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[Cod: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}</div></li>`; }); calcolaSaldoParziale(); }
+        
+        // Tasto stampa singola etichetta
+        let printSingleBtn = `<button class="btn btn-sm btn-outline-secondary ms-2" onclick="stampaSingolaEtichetta(${c.id})" title="Stampa Etichetta Singola"><i class="bi bi-tag-fill"></i></button>`;
+
+        ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[Cod: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}${printSingleBtn}</div></li>`; }); calcolaSaldoParziale(); }
     
     async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
 
-    function calcolaSaldoParziale() { let valoreNuovaSelezione = 0; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); if (valoreNuovaSelezione === 0) { mostraIncasso(0); return; } let valoreGiaRitirato = 0; cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); mostraIncasso(daIncassare); }
+    function selectMetodoConsegna(m) {
+        metodoConsegnaScelto = m;
+        document.getElementById('opt-cons-contanti').classList.remove('pay-selected');
+        document.getElementById('opt-cons-carta').classList.remove('pay-selected');
+        if(m === 'Contanti') document.getElementById('opt-cons-contanti').classList.add('pay-selected');
+        else document.getElementById('opt-cons-carta').classList.add('pay-selected');
+    }
+
+    function calcolaSaldoParziale() { 
+        let valoreNuovaSelezione = 0; 
+        document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); 
+        
+        let valoreGiaRitirato = 0; 
+        cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); 
+        
+        let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); 
+        let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
+        let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); 
+        
+        mostraIncasso(daIncassare); 
+
+        // Gestione visibilità metodi pagamento
+        const boxMetodi = document.getElementById('box-metodi-consegna');
+        if (daIncassare > 0) {
+            boxMetodi.style.display = 'flex';
+        } else {
+            boxMetodi.style.display = 'none';
+            metodoConsegnaScelto = 'Contanti'; // Reset default se non si paga
+        }
+    }
+
     function mostraIncasso(val) { const span = document.getElementById('cons-residuo-parziale'); span.innerText = "€ " + val.toFixed(2); span.setAttribute('data-val', val); span.className = val === 0 ? "fw-bold fs-1 text-success" : "fw-bold fs-1 text-danger"; }
     function toggleSelezionaTutto() { let checkboxes = document.querySelectorAll('.chk-ritiro:not(:disabled)'); let allChecked = Array.from(checkboxes).every(c => c.checked); checkboxes.forEach(chk => chk.checked = !allChecked); calcolaSaldoParziale(); }
     function apriEditCapo(id, nome, prezzo) { document.getElementById('edit-id-capo').value = id; document.getElementById('edit-nome-capo').value = nome; document.getElementById('edit-prezzo-capo').value = prezzo; bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); new bootstrap.Modal(document.getElementById('modalEditConsegna')).show(); }
     async function salvaModificaCapo() { const id = document.getElementById('edit-id-capo').value; const nome = document.getElementById('edit-nome-capo').value; const prezzo = parseFloat(document.getElementById('edit-prezzo-capo').value); await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: nome, prezzo: prezzo}) }); bootstrap.Modal.getInstance(document.getElementById('modalEditConsegna')).hide(); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
-    async function confermaConsegna(stampaFiscale) { let ids = []; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); if (ids.length === 0) return alert("Seleziona almeno un capo!"); let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; if (stampaFiscale) { if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)}?`)) return; } else { if(!confirm("Consegna SENZA scontrino?")) return; } const res = await fetch('/consegna_items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, incasso: incasso, sconto_extra: scontoExtra, stampa_fiscale: stampaFiscale}) }); const data = await res.json(); if(data.msg) alert(data.msg); bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); document.getElementById('cerca-consegna').value = ''; document.getElementById('tabella-ordini').innerHTML = ''; }
+    
+    async function confermaConsegna(stampaFiscale) { 
+        let ids = []; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); 
+        if (ids.length === 0) return alert("Seleziona almeno un capo!"); 
+        
+        let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; 
+        let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
+        
+        // Uso il metodo selezionato nel modal, oppure vuoto se non c'è incasso
+        let metodoFinale = incasso > 0 ? metodoConsegnaScelto : '';
+
+        if (stampaFiscale) { 
+            if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)} (${metodoFinale})?`)) return; 
+        } else { 
+            if(!confirm("Consegna SENZA scontrino?")) return; 
+        } 
+        const res = await fetch('/consegna_items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, incasso: incasso, sconto_extra: scontoExtra, stampa_fiscale: stampaFiscale, metodo_pagamento: metodoFinale}) }); 
+        const data = await res.json(); 
+        if(data.msg) alert(data.msg); 
+        bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); 
+        document.getElementById('cerca-consegna').value = ''; 
+        document.getElementById('tabella-ordini').innerHTML = ''; 
+    }
+
+    async function stampaSingolaEtichetta(capoId) {
+        if(!confirm("Stampare l'etichetta per questo singolo capo?")) return;
+        try {
+            const res = await fetch('/api/stampa_etichetta_singola', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({capo_id: capoId})
+            });
+            const data = await res.json();
+            if(data.status !== 'success') alert("Errore: " + data.msg);
+        } catch(e) {
+            alert("Errore di comunicazione: " + e);
+        }
+    }
     
     // --- GESTIONE IMPOSTAZIONI E AGGIORNAMENTO ---
     async function apriImpostazioni() { 

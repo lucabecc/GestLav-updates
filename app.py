@@ -83,7 +83,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")          
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")           
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -160,7 +160,10 @@ def get_label_font_command(size_name):
 def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
     porta = get_setting("port_labels")
     listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    capi = [x for x in items_con_id if x['nome'] not in listino_vendita]
+    # Filtra i capi, ma se stiamo stampando una singola etichetta (items_con_id ha 1 elemento), la stampiamo a prescindere
+    is_singola = len(items_con_id) == 1
+    capi = [x for x in items_con_id if is_singola or x['nome'] not in listino_vendita]
+    
     tot = len(capi)
     if tot == 0: return True
     
@@ -192,7 +195,11 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
             if get_setting("font_label_row1") == "huge": write(f_row1 + enc(f"{riga1}\n"))
             else: write(f_row1 + BOLD_ON + enc(f"{riga1}\n") + BOLD_OFF)
             write(f_row2 + BOLD_ON + enc(f"{cliente_nome[:15].upper()}\n") + BOLD_OFF)
-            riga_capo = f"{item['nome'][:18]} ({i}/{tot})"
+            
+            # Se è singola, non mettiamo il contatore (1/N) perché potrebbe confondere
+            riga_capo = f"{item['nome'][:18]}"
+            if not is_singola: riga_capo += f" ({i}/{tot})"
+            
             riga_completa = f"{riga_capo} R:{data_ritiro_str}"
             write(f_row3 + BOLD_ON + enc(f"{riga_completa}\n") + BOLD_OFF)
             write(b'\x1bd' + bytes([feed_lines])); write(CMD_CUT)
@@ -562,6 +569,42 @@ def toggle_stato_pagamento():
         conn.commit()
     conn.close()
     return jsonify({'status': 'success'})
+
+@app.route('/api/stampa_etichetta_singola', methods=['POST'])
+def stampa_etichetta_singola():
+    try:
+        d = request.json
+        capo_id = d.get('capo_id')
+        
+        conn = get_db(); cursor = conn.cursor()
+        
+        # Recupero dettaglio capo
+        cursor.execute("SELECT * FROM dettagli_ordine WHERE id = ?", (capo_id,))
+        capo = cursor.fetchone()
+        
+        if not capo: return jsonify({'status': 'error', 'msg': 'Capo non trovato'})
+        
+        # Recupero Ordine per numero e cliente
+        cursor.execute("SELECT * FROM ordini WHERE id = ?", (capo['ordine_id'],))
+        ordine = cursor.fetchone()
+        
+        # Recupero Cliente
+        cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
+        cliente = cursor.fetchone()
+        cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
+        
+        conn.close()
+        
+        # Preparo l'oggetto per la funzione stampa (si aspetta una lista con 'id' e 'nome')
+        item_obj = {'id': capo['id'], 'nome': capo['capo']}
+        
+        ok = stampa_etichette(ordine['num_scontrino'], [item_obj], cliente_nome, ordine['data_ritiro'])
+        
+        if ok: return jsonify({'status': 'success', 'msg': 'Etichetta singola stampata!'})
+        else: return jsonify({'status': 'error', 'msg': 'Errore durante la stampa'})
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/api/ristampa_ordine', methods=['POST'])
 def ristampa_ordine():
