@@ -194,7 +194,7 @@
                     <label class="fw-bold text-primary text-center d-block mb-1">CERCA INTERO ORDINE</label>
                     <div class="input-group">
                         <span class="input-group-text bg-primary text-white"><i class="bi bi-receipt"></i></span>
-                        <input type="number" id="input-pronti-scontrino" class="form-control form-control-lg fw-bold text-center" placeholder="N. Scontrino" onkeydown="if(event.key==='Enter') cercaPerScontrino()">
+                        <input type="number" id="input-pronti-scontrino" class="form-control form-control-lg fw-bold text-center" placeholder="N. Scontrino" onkeydown="if(event.key==='Enter'){event.preventDefault(); cercaPerScontrino();}">
                         <button class="btn btn-primary" onclick="cercaPerScontrino()">Cerca</button>
                     </div>
                 </div>
@@ -205,7 +205,7 @@
                     <label class="fw-bold text-warning text-center d-block mb-1">CERCA SINGOLO CAPO</label>
                     <div class="input-group">
                         <span class="input-group-text bg-warning text-dark"><i class="bi bi-tag-fill"></i></span>
-                        <input type="number" id="input-pronti-capo" class="form-control form-control-lg fw-bold text-center" placeholder="Codice Capo" onkeydown="if(event.key==='Enter') cercaPerCapo()">
+                        <input type="number" id="input-pronti-capo" class="form-control form-control-lg fw-bold text-center" placeholder="Codice Capo" onkeydown="if(event.key==='Enter'){event.preventDefault(); cercaPerCapo();}">
                         <button class="btn btn-warning" onclick="cercaPerCapo()">Cerca</button>
                     </div>
                 </div>
@@ -516,11 +516,14 @@
         document.getElementById('cliente-selezionato').style.display = 'flex'; 
         document.getElementById('lista-ricerca').innerHTML = ''; 
         document.getElementById('cerca').value = ''; 
+        // MODIFICA: Tolto il focus per evitare interazioni strane
+        document.getElementById('cerca').blur(); 
         document.getElementById('pannello-capi').style.opacity = '1'; 
         document.getElementById('pannello-capi').style.pointerEvents = 'auto'; 
         const res = await fetch(`/cerca_ordini_aperti?cliente_id=${c.id}`);
         const ordini = await res.json();
         const btnAlert = document.getElementById('btn-alert-ritiri');
+        // MODIFICA: Qui ci limitiamo SOLO a mostrare il pulsante. NON apriamo modali.
         if(ordini.length > 0) btnAlert.style.display = 'block'; else btnAlert.style.display = 'none';
     }
 
