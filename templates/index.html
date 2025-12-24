@@ -122,7 +122,18 @@
 
             </div>
             <div class="card p-3 mt-3 shadow-sm border-0">
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="check-pagato" onchange="togglePagamento()"><label class="form-check-label fw-bold" for="check-pagato">SALDA TUTTO SUBITO</label></div>
+                <div class="d-flex align-items-center gap-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="check-pagato" onchange="togglePagamento()">
+                        <label class="form-check-label fw-bold" for="check-pagato">PAGAMENTO ANTICIPATO</label>
+                    </div>
+                    <div class="vr"></div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="check-approx">
+                        <label class="form-check-label fw-bold" for="check-approx">DATA APPROSSIMATIVA (30gg)</label>
+                    </div>
+                </div>
+                
                 <div id="box-metodi" class="row g-2 mt-2 hidden"><div class="col-6"><div class="pay-option pay-selected" id="opt-contanti" onclick="selectMetodo('Contanti')">💶 CONTANTI</div></div><div class="col-6"><div class="pay-option" id="opt-carta" onclick="selectMetodo('Carta')">💳 CARTA (Fiscale)</div></div></div>
             </div>
         </div>
@@ -240,8 +251,8 @@
             </div>
             <div class="modal-body">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                     <h4 id="cons-cliente" class="mb-0 text-primary fw-bold"></h4>
-                     <button class="btn btn-outline-warning btn-sm fw-bold" id="btn-toggle-pay" onclick="toggleStatoPagamento()">Cambia Stato</button>
+                      <h4 id="cons-cliente" class="mb-0 text-primary fw-bold"></h4>
+                      <button class="btn btn-outline-warning btn-sm fw-bold" id="btn-toggle-pay" onclick="toggleStatoPagamento()">Cambia Stato</button>
                 </div>
 
                 <div class="alert alert-light border p-3 mb-3">
@@ -487,7 +498,7 @@
 
     function vaiRicezione() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-ricezione').classList.remove('hidden'); initCalendar(); }
     function vaiConsegna() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-consegna').classList.remove('hidden'); document.getElementById('tabella-ordini').innerHTML=''; document.getElementById('cerca-consegna').value=''; document.getElementById('cerca-consegna').focus(); currentDeliveryClientId = null; }
-    function vaiPronti() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('input-pronti-scontrino').value=''; document.getElementById('input-pronti-capo').value=''; document.getElementById('input-catena').value=''; document.getElementById('box-lista-pronti').style.display='none'; document.getElementById('input-pronti-scontrino').focus(); }
+    function vaiPronti() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('input-pronti-scontrino').value=''; document.getElementById('input-pronti-capo').value=''; document.getElementById('input-catena').value=''; document.getElementById('box-lista-pronti').style.display='none'; document.getElementById('input-pronti-scontrino').focus(); }
     function vaiHome() { document.getElementById('view-ricezione').classList.add('hidden'); document.getElementById('view-consegna').classList.add('hidden'); document.getElementById('view-pronti').classList.add('hidden'); document.getElementById('view-home').classList.remove('hidden'); resetCliente(); }
 
     async function clienteRapido() { const res = await fetch('/get_cliente_rapido'); const c = await res.json(); selezionaCliente(c); const tabs = document.querySelectorAll('#pills-tab button'); if(tabs[3]) tabs[3].click(); }
@@ -544,7 +555,29 @@
     let metodoScelto='Contanti', isPagato=false;
     function togglePagamento() { isPagato = document.getElementById('check-pagato').checked; document.getElementById('box-metodi').classList.toggle('hidden', !isPagato); }
     function selectMetodo(m) { metodoScelto = m; document.querySelectorAll('.pay-option').forEach(e=>e.classList.remove('pay-selected')); document.getElementById(m==='Contanti'?'opt-contanti':'opt-carta').classList.add('pay-selected'); }
-    async function salvaOrdine() { if(!clienteCorrente) return alert("Manca Cliente!"); const btn=document.getElementById('btn-salva'); btn.disabled=true; btn.innerText="⏳..."; await fetch('/salva_ordine', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cliente_id:clienteCorrente.id, cliente_nome:clienteCorrente.nome_completo, carrello:carrello, data_ritiro:document.getElementById('data-ritiro').value, pagato:isPagato, metodo:isPagato?metodoScelto:'', sconto: parseFloat(document.getElementById('input-sconto').value)||0, acconto: parseFloat(document.getElementById('input-acconto').value)||0})}); location.reload(); }
+    async function salvaOrdine() { 
+        if(!clienteCorrente) return alert("Manca Cliente!"); 
+        const btn=document.getElementById('btn-salva'); btn.disabled=true; btn.innerText="⏳..."; 
+        // Recuperiamo il valore della checkbox "Data Approssimativa"
+        const isApprox = document.getElementById('check-approx').checked;
+
+        await fetch('/salva_ordine', {
+            method:'POST', 
+            headers:{'Content-Type':'application/json'}, 
+            body:JSON.stringify({
+                cliente_id:clienteCorrente.id, 
+                cliente_nome:clienteCorrente.nome_completo, 
+                carrello:carrello, 
+                data_ritiro:document.getElementById('data-ritiro').value, 
+                pagato:isPagato, 
+                metodo:isPagato?metodoScelto:'', 
+                sconto: parseFloat(document.getElementById('input-sconto').value)||0, 
+                acconto: parseFloat(document.getElementById('input-acconto').value)||0,
+                is_approx: isApprox // Inviamo la scelta al server
+            })
+        }); 
+        location.reload(); 
+    }
     async function sospendiOrdine() { if(!clienteCorrente) return alert("Manca Cliente!"); await fetch('/sospendi_ordine', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cliente_id:clienteCorrente.id, carrello:carrello, data_ritiro:document.getElementById('data-ritiro').value })}); alert("Ordine PAUSA 🅿️"); resetCliente(); }
     async function apriModalSospesi() { const res = await fetch('/recupera_sospesi'); const data = await res.json(); const ul = document.getElementById('lista-sospesi'); ul.innerHTML = ''; if(data.length === 0) ul.innerHTML = '<li class="list-group-item">Nessun ordine sospeso.</li>'; data.forEach(o => { ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div><strong>${o.nome} ${o.cognome}</strong><br><small>${new Date(o.data_ingresso).toLocaleTimeString()}</small></div><button class="btn btn-primary btn-sm" onclick="caricaSospeso(${o.id})">Recupera</button></li>`; }); new bootstrap.Modal(document.getElementById('modalSospesi')).show(); }
     async function caricaSospeso(id) { const res = await fetch('/carica_sospeso', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})}); const d = await res.json(); selezionaCliente(d.cliente); carrello = d.carrello; aggiornaScontrino(); bootstrap.Modal.getInstance(document.getElementById('modalSospesi')).hide(); }

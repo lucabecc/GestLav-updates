@@ -57,7 +57,8 @@ def init_db():
     cursor = conn.cursor()
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT, telefono TEXT, indirizzo TEXT, citta TEXT, cap TEXT, data_nascita TEXT, note TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT)''')
+    # Aggiunto is_approx_date alla creazione tabella ordini se non esiste
+    cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT, is_approx_date INTEGER DEFAULT 0)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS dettagli_ordine (id INTEGER PRIMARY KEY AUTOINCREMENT, ordine_id INTEGER, capo TEXT, prezzo REAL, ritirato INTEGER DEFAULT 0, stato_lavorazione INTEGER DEFAULT 0, numero_catena TEXT DEFAULT '')''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
@@ -72,6 +73,10 @@ def init_db():
     try: cursor.execute("SELECT tipo_stoccaggio FROM dettagli_ordine LIMIT 1")
     except: cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
     
+    # Migration per data approssimativa
+    try: cursor.execute("SELECT is_approx_date FROM ordini LIMIT 1")
+    except: cursor.execute("ALTER TABLE ordini ADD COLUMN is_approx_date INTEGER DEFAULT 0")
+
     conn.commit()
 
     defaults = [
@@ -158,6 +163,7 @@ def get_label_font_command(size_name):
 
 # --- STAMPE ---
 def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
+    # Nelle etichette (marcature) stampiamo SEMPRE la data effettiva selezionata, mai "Data Approssimativa".
     porta = get_setting("port_labels")
     listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
     # Filtra i capi, ma se stiamo stampando una singola etichetta (items_con_id ha 1 elemento), la stampiamo a prescindere
@@ -207,11 +213,14 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
         return True
     except Exception as e: return False
 
-def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo):
+def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx_date=False):
     stampante = get_setting("printer_star")
     header_text = get_setting("ticket_header")
     footer_text = get_setting("ticket_footer")
     print_logo = get_setting("print_logo") == "1"
+    
+    # MODIFICA: Se è data approssimativa, sovrascriviamo la stringa di stampa, ma manteniamo la data originale nel DB e nelle etichette
+    stringa_data_ritiro_stampa = "Data Approssimativa 30 Giorni" if is_approx_date else f"Ritiro dal: {data_ritiro_str}"
     
     S_HEAD = get_star_font(get_setting("font_header") or "wide")
     S_NUM  = get_star_font(get_setting("font_num") or "big")
@@ -254,7 +263,8 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
                 else: buffer += ALIGN_CENTER + S_WIDE + b"SALDATO\n" + S_NORM + ALIGN_LEFT
             else:
                 if pagato: buffer += ALIGN_CENTER + S_WIDE + enc(f"PAGATO ({metodo})\n") + S_NORM + ALIGN_LEFT
-            buffer += b"\n" + ALIGN_CENTER + S_NORM + BOLD_ON + enc(f"Ritiro dal: {data_ritiro_str}\n") + BOLD_OFF
+            
+            buffer += b"\n" + ALIGN_CENTER + S_NORM + BOLD_ON + enc(f"{stringa_data_ritiro_stampa}\n") + BOLD_OFF
             buffer += ALIGN_CENTER + S_FOOT
             if footer_text:
                 for r in footer_text.split('\n'): buffer += enc(r) + b"\n"
@@ -430,6 +440,9 @@ def salva_ordine():
     carrello, data_ritiro_raw = d['carrello'], d['data_ritiro']
     sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
     pagato, metodo = d['pagato'], d['metodo']
+    # Recuperiamo il flag per data approssimativa
+    is_approx = d.get('is_approx', False)
+
     dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
     data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
     totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
@@ -443,7 +456,9 @@ def salva_ordine():
     stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
     if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
     fiscale_desk_val = 1 if stampa_ora else 0
-    cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione'))
+    
+    # Inseriamo l'ordine includendo il flag is_approx_date
+    cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato, is_approx_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione', 1 if is_approx else 0))
     oid = cursor.lastrowid
     stato_lavorazione = 1 if solo_prodotti else 0
     items_con_id = []
@@ -452,7 +467,9 @@ def salva_ordine():
         item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
     conn.commit(); conn.close()
     if not solo_prodotti: 
-        stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo)
+        # Passiamo is_approx_date alla funzione stampa_scontrino
+        stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx)
+        # stampa_etichette NON usa is_approx_date, usa sempre data_ritiro_str vera
         stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
     return jsonify({"status": "success", "id_ordine": oid})
 
@@ -629,6 +646,11 @@ def ristampa_ordine():
         cursor.execute("SELECT id, capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id = ?", (oid,))
         carrello = [dict(row) for row in cursor.fetchall()]
         
+        # Recupero flag data approssimativa
+        is_approx = False
+        if 'is_approx_date' in ordine.keys():
+            is_approx = (ordine['is_approx_date'] == 1)
+
         conn.close()
         
         if tipo == 'scontrino':
@@ -651,7 +673,8 @@ def ristampa_ordine():
                 acconto, 
                 ordine['data_ritiro'], 
                 pagato, 
-                metodo
+                metodo,
+                is_approx # Passiamo il flag
             )
             if ok: return jsonify({'status': 'success', 'msg': 'Scontrino inviato alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa scontrino'})
@@ -661,7 +684,7 @@ def ristampa_ordine():
                 ordine['num_scontrino'],
                 carrello, # contiene 'id' e 'nome'
                 cliente_nome,
-                ordine['data_ritiro']
+                ordine['data_ritiro'] # Etichette usano SEMPRE data reale
             )
             if ok: return jsonify({'status': 'success', 'msg': 'Etichette inviate alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa etichette'})
