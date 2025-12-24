@@ -242,6 +242,32 @@
     </div>
 </div>
 
+<div class="modal fade" id="modalAutoUpdate" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title fw-bold">🚀 Aggiornamento Disponibile!</h5>
+            </div>
+            <div class="modal-body">
+                <p>È stata rilevata una nuova versione del gestionale.</p>
+                <div class="alert alert-info text-center">
+                    Versione Corrente: <strong><span id="ver-old"></span></strong><br>
+                    Nuova Versione: <strong><span id="ver-new"></span></strong>
+                </div>
+                <p class="text-center">Vuoi scaricare e installare l'aggiornamento ora?</p>
+                <div id="spinner-update" class="text-center hidden">
+                    <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+                    <p>Aggiornamento in corso... Attendere prego...</p>
+                </div>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No, ricorda dopo</button>
+                <button type="button" class="btn btn-success fw-bold px-4" id="btn-start-auto-update" onclick="performAutoUpdate()">SÌ, AGGIORNA ORA</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="modalConsegna" tabindex="-1">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -493,6 +519,55 @@
     let sortableInstance = null;
     let metodoConsegnaScelto = 'Contanti';
     let currentDeliveryClientId = null; // Memorizza l'ID del cliente selezionato nella Riconsegna
+
+    // --- NUOVA LOGICA AGGIORNAMENTO AUTOMATICO ---
+    document.addEventListener("DOMContentLoaded", function() {
+        // Appena il sito è pronto, controlla silenziosamente se ci sono aggiornamenti
+        autoCheckUpdate();
+    });
+
+    async function autoCheckUpdate() {
+        try {
+            const res = await fetch('/api/check_update');
+            const data = await res.json();
+            
+            // Se c'è un aggiornamento, apri il modal
+            if (data.update_available) {
+                document.getElementById('ver-old').innerText = data.local;
+                document.getElementById('ver-new').innerText = data.remote;
+                new bootstrap.Modal(document.getElementById('modalAutoUpdate')).show();
+            }
+        } catch(e) {
+            console.error("Auto check update failed", e);
+        }
+    }
+
+    async function performAutoUpdate() {
+        const btn = document.getElementById('btn-start-auto-update');
+        const spinner = document.getElementById('spinner-update');
+        btn.disabled = true;
+        btn.innerText = "Attendere...";
+        spinner.classList.remove('hidden');
+
+        try {
+            const res = await fetch('/api/perform_update', {method:'POST'});
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert("Aggiornamento completato con successo! Il sistema si riavvierà.");
+                location.reload();
+            } else {
+                alert("Errore aggiornamento: " + data.msg);
+                btn.disabled = false;
+                btn.innerText = "RIPROVA";
+                spinner.classList.add('hidden');
+            }
+        } catch(e) {
+            alert("Errore di connessione durante l'aggiornamento.");
+            btn.disabled = false;
+            spinner.classList.add('hidden');
+        }
+    }
+    // --- FINE NUOVA LOGICA ---
 
     async function initCalendar() { try { const res = await fetch('/api/carico_lavoro'); caricoLavoro = await res.json(); picker = flatpickr("#data-ritiro", { locale: "it", dateFormat: "d/m", defaultDate: new Date().fp_incr(3), minDate: "today", disable: [ function(date) { if (date.getDay() === 0) return true; let dm = date.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}).replace('/', '-'); let fullDate = date.toISOString().split('T')[0]; return festivita.includes(dm) || festivita.includes(fullDate); } ], onDayCreate: function(dObj, dStr, fp, dayElem) { let key = dayElem.dateObj.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}); if (dayElem.classList.contains("flatpickr-disabled")) { dayElem.classList.add("festivo"); } if (caricoLavoro[key]) { dayElem.innerHTML += `<span class='capi-counter'>${caricoLavoro[key]}</span>`; } } }); } catch (e) { console.error("Errore Calendario:", e); } }
 
