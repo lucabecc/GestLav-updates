@@ -153,7 +153,20 @@
             <input type="text" id="cerca-consegna" class="form-control mb-3 form-control-lg border-primary fw-bold" placeholder="🔍 Cerca Cliente o N. Scontrino..." autocomplete="off">
             <ul id="suggerimenti-consegna" class="list-group position-absolute w-100 shadow" style="z-index:1000; top: 50px;"></ul>
         </div>
-        <table class="table table-striped table-hover align-middle" id="table-consegna"><thead class="table-dark"><tr><th>Stato</th><th># Scontrino</th><th>Ritiro Previsto</th><th>Cliente</th><th>Stato Pagamento</th><th>Pos. Catena</th><th>Dettagli</th></tr></thead><tbody id="tabella-ordini"></tbody></table>
+        <table class="table table-striped table-hover align-middle" id="table-consegna">
+            <thead class="table-dark">
+                <tr>
+                    <th># Scontrino</th>
+                    <th>Data Ritiro</th>
+                    <th>Cliente</th>
+                    <th>Stato Lav.</th>
+                    <th>Pagamento</th>
+                    <th>Pos. Catena</th>
+                    <th style="width: 250px;">Azioni</th>
+                </tr>
+            </thead>
+            <tbody id="tabella-ordini"></tbody>
+        </table>
     </div>
 </div>
 
@@ -209,7 +222,11 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <h4 id="cons-cliente" class="mb-3 text-primary fw-bold"></h4>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                     <h4 id="cons-cliente" class="mb-0 text-primary fw-bold"></h4>
+                     <button class="btn btn-outline-warning btn-sm fw-bold" id="btn-toggle-pay" onclick="toggleStatoPagamento()">Cambia Stato</button>
+                </div>
+
                 <div class="alert alert-light border p-3 mb-3">
                     <div class="row align-items-center">
                         <div class="col-md-6 text-center">
@@ -222,11 +239,9 @@
                         </div>
                     </div>
                 </div>
-                
                 <div class="d-flex justify-content-end mb-2">
                     <button class="btn btn-outline-secondary btn-sm" onclick="toggleSelezionaTutto()">✅ Seleziona Tutto</button>
                 </div>
-                
                 <div id="cons-lista" class="list-group mb-4"></div>
                 
                 <div id="box-metodi-consegna" class="row g-2 mb-3" style="display:none;">
@@ -328,6 +343,11 @@
 
                         <h5 class="text-primary"><i class="bi bi-tags-fill"></i> Personalizzazione Etichette</h5>
                         <div class="card p-3 bg-light">
+                            <div class="mb-2">
+                                <label class="fw-bold">Testo Personalizzato (Sede)</label>
+                                <input type="text" id="conf-label-text" class="form-control">
+                            </div>
+
                             <div class="row g-2">
                                 <div class="col-6 mb-2">
                                     <label class="small fw-bold">Riga 1 (Ord/ID)</label>
@@ -413,7 +433,7 @@
                 <input class="form-control mb-2" list="datalistCategorie" id="edit-listino-cat" placeholder="Seleziona o scrivi nuova...">
                 <datalist id="datalistCategorie"></datalist>
                 <label>Nome Capo</label><input type="text" id="edit-listino-nome" class="form-control mb-2">
-                <label>Prezzo</label><input type="number" id="edit-listino-prezzo" class="form-control mb-2" step="0.50">
+                <label>Prezzo</label><input type="number" id="edit-listino-prezzo" class="form-control" step="0.50">
                 <label>Posizione Default (Nastro/Scaffale)</label>
                 <select id="edit-listino-tipo" class="form-select">
                     <option value="Nastro">🔄 Nastro</option>
@@ -439,24 +459,13 @@
     let modalConsegnaObj = null; let modalSceltaOrdineObj = null;
     let lastSearchQuery = { type: null, val: null }; 
     let listinoRaw = []; 
-    let sortableInstance = null; 
+    let sortableInstance = null;
 
     async function initCalendar() { try { const res = await fetch('/api/carico_lavoro'); caricoLavoro = await res.json(); picker = flatpickr("#data-ritiro", { locale: "it", dateFormat: "d/m", defaultDate: new Date().fp_incr(3), minDate: "today", disable: [ function(date) { if (date.getDay() === 0) return true; let dm = date.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}).replace('/', '-'); let fullDate = date.toISOString().split('T')[0]; return festivita.includes(dm) || festivita.includes(fullDate); } ], onDayCreate: function(dObj, dStr, fp, dayElem) { let key = dayElem.dateObj.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}); if (dayElem.classList.contains("flatpickr-disabled")) { dayElem.classList.add("festivo"); } if (caricoLavoro[key]) { dayElem.innerHTML += `<span class='capi-counter'>${caricoLavoro[key]}</span>`; } } }); } catch (e) { console.error("Errore Calendario:", e); } }
 
     function vaiRicezione() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-ricezione').classList.remove('hidden'); initCalendar(); }
     function vaiConsegna() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-consegna').classList.remove('hidden'); document.getElementById('tabella-ordini').innerHTML=''; document.getElementById('cerca-consegna').value=''; document.getElementById('cerca-consegna').focus(); }
-    
-    // RESETTA I CAMPI DI RICERCA PRONTI
-    function vaiPronti() { 
-        document.getElementById('view-home').classList.add('hidden'); 
-        document.getElementById('view-pronti').classList.remove('hidden'); 
-        document.getElementById('input-pronti-scontrino').value=''; 
-        document.getElementById('input-pronti-capo').value=''; 
-        document.getElementById('input-catena').value=''; 
-        document.getElementById('box-lista-pronti').style.display='none'; 
-        document.getElementById('input-pronti-scontrino').focus(); 
-    }
-    
+    function vaiPronti() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('input-pronti-scontrino').value=''; document.getElementById('input-pronti-capo').value=''; document.getElementById('input-catena').value=''; document.getElementById('box-lista-pronti').style.display='none'; document.getElementById('input-pronti-scontrino').focus(); }
     function vaiHome() { document.getElementById('view-ricezione').classList.add('hidden'); document.getElementById('view-consegna').classList.add('hidden'); document.getElementById('view-pronti').classList.add('hidden'); document.getElementById('view-home').classList.remove('hidden'); resetCliente(); }
 
     async function clienteRapido() { const res = await fetch('/get_cliente_rapido'); const c = await res.json(); selezionaCliente(c); const tabs = document.querySelectorAll('#pills-tab button'); if(tabs[3]) tabs[3].click(); }
@@ -500,7 +509,7 @@
     function resetCliente() { clienteCorrente = null; carrello = []; document.getElementById('qty-input').value = 1; aggiornaScontrino(); document.getElementById('cliente-selezionato').style.display = 'none'; document.getElementById('pannello-capi').style.opacity = '0.5'; document.getElementById('pannello-capi').style.pointerEvents = 'none'; document.getElementById('btn-alert-ritiri').style.display='none'; }
     async function salvaNuovoCliente() { const d = { nome: document.getElementById('new-nome').value, cognome: document.getElementById('new-cognome').value, telefono: document.getElementById('new-tel').value, indirizzo: document.getElementById('new-indirizzo').value, citta: document.getElementById('new-citta').value, cap: document.getElementById('new-cap').value, data_nascita: document.getElementById('new-nascita').value }; const res = await fetch('/crea_cliente', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)}); const r = await res.json(); if(r.status === 'success') { bootstrap.Modal.getInstance(document.getElementById('modalNuovoCliente')).hide(); r.nome_completo = r.nome; selezionaCliente(r); } else { alert(r.msg); } }
 
-    function cambiaQty(d) { let el = document.getElementById('qty-input'); let val = parseInt(el.value) || 1; val += d; if(val < 1) val = 1; el.value = val; }
+    function cambiaQty(d) { let el = document.getElementById('qty-input'); let val = parseInt(el.value) || 1; val = Math.max(1, val + d); document.getElementById('qty-input').value = val; }
     function setQty(val) { document.getElementById('qty-input').value = val; }
     function aggiungiCapo(nome, prezzo) { let qty = parseInt(document.getElementById('qty-input').value) || 1; for(let i=0; i<qty; i++) { carrello.push({nome: nome, prezzo: prezzo}); } document.getElementById('qty-input').value = 1; aggiornaScontrino(); }
     function aggiornaScontrino(ridisegna=true) { if(ridisegna){ const div=document.getElementById('lista-carrello'); if(carrello.length===0) div.innerHTML='<p class="text-center mt-5 text-muted">Vuoto</p>'; else { let gruppi={}; carrello.forEach((x,i)=>{ if(!gruppi[x.nome])gruppi[x.nome]={count:0,tot:0}; gruppi[x.nome].count++; gruppi[x.nome].tot+=x.prezzo; }); let html=''; for(let n in gruppi){ let g=gruppi[n]; html+=`<div class="cart-group d-flex justify-content-between align-items-center" onclick="apriDettaglioGruppo('${n}')"><div><span class="badge-qty">${g.count}</span><span class="fw-bold">${n}</span></div><div class="fw-bold">€ ${g.tot.toFixed(2)}</div></div>`; } div.innerHTML=html; }} let tot=0; carrello.forEach(x=>tot+=x.prezzo); let sc=parseFloat(document.getElementById('input-sconto').value)||0; let ac=parseFloat(document.getElementById('input-acconto').value)||0; let daPagare = Math.max(0, tot - sc - ac); document.getElementById('totale').innerText = daPagare.toFixed(2); let h=carrello.length>0; document.getElementById('btn-salva').disabled=!h; document.getElementById('btn-sospendi').disabled=!h; }
@@ -517,6 +526,108 @@
     async function sospendiOrdine() { if(!clienteCorrente) return alert("Manca Cliente!"); await fetch('/sospendi_ordine', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cliente_id:clienteCorrente.id, carrello:carrello, data_ritiro:document.getElementById('data-ritiro').value })}); alert("Ordine PAUSA 🅿️"); resetCliente(); }
     async function apriModalSospesi() { const res = await fetch('/recupera_sospesi'); const data = await res.json(); const ul = document.getElementById('lista-sospesi'); ul.innerHTML = ''; if(data.length === 0) ul.innerHTML = '<li class="list-group-item">Nessun ordine sospeso.</li>'; data.forEach(o => { ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div><strong>${o.nome} ${o.cognome}</strong><br><small>${new Date(o.data_ingresso).toLocaleTimeString()}</small></div><button class="btn btn-primary btn-sm" onclick="caricaSospeso(${o.id})">Recupera</button></li>`; }); new bootstrap.Modal(document.getElementById('modalSospesi')).show(); }
     async function caricaSospeso(id) { const res = await fetch('/carica_sospeso', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})}); const d = await res.json(); selezionaCliente(d.cliente); carrello = d.carrello; aggiornaScontrino(); bootstrap.Modal.getInstance(document.getElementById('modalSospesi')).hide(); }
+    
+    // --- GESTIONE PRONTI ---
+    let ordineProntiId = null;
+    async function cercaPerScontrino() { const val = document.getElementById('input-pronti-scontrino').value; if(val) eseguiRicercaPronti('ordine', val); }
+    async function cercaPerCapo() { const val = document.getElementById('input-pronti-capo').value; if(val) eseguiRicercaPronti('capo', val); }
+    async function eseguiRicercaPronti(tipo, valore) { const res = await fetch('/get_items_scontrino', {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tipo: tipo, valore: valore})}); const d = await res.json(); if(d.status === 'error') { alert(d.msg); return; } ordineProntiId = d.ordine_id; const ul = document.getElementById('lista-pronti'); if(document.getElementById('input-pronti-scontrino').getAttribute('data-last-ord') != ordineProntiId) { ul.innerHTML = ''; } document.getElementById('input-pronti-scontrino').setAttribute('data-last-ord', ordineProntiId); if(ul.children.length === 0) { d.items.forEach(i => { ul.innerHTML += `<li class="list-group-item"><input class="form-check-input me-2 chk-pronto" type="checkbox" value="${i.id}"> ${i.capo} <small class="text-muted">[Cod: ${i.id}]</small></li>`; }); } d.items.forEach(i => { let checkbox = ul.querySelector(`input[value="${i.id}"]`); if(checkbox && (tipo === 'ordine' || (tipo === 'capo' && i.id === d.target_item_id))) checkbox.checked = true; }); document.getElementById('box-lista-pronti').style.display='block'; document.getElementById('input-catena').focus(); if(tipo === 'capo') document.getElementById('input-pronti-capo').value = ''; if(tipo === 'ordine') document.getElementById('input-pronti-scontrino').value = ''; }
+    async function confermaPronti() { let ids = []; document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); const catena = document.getElementById('input-catena').value; const res = await fetch('/conferma_pronti', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})}); const data = await res.json(); if(data.status === 'error') { alert(data.msg); } else { alert("Stati aggiornati!"); vaiHome(); } }
+
+    // --- RICONSEGNA E RISTAMPA ---
+    let focusConsegna = -1;
+    document.getElementById('cerca-consegna').addEventListener('input', async function() { focusConsegna = -1; const val = this.value; const list = document.getElementById('suggerimenti-consegna'); const tableBody = document.getElementById('tabella-ordini'); list.innerHTML = ''; if (!val) { tableBody.innerHTML = ''; return; } if (val.match(/^\d+$/)) { cercaOrdini(val); list.innerHTML = ''; } else { const res = await fetch(`/cerca_cliente?q=${val}`); const data = await res.json(); data.forEach(c => { let li = document.createElement('li'); li.className = "list-group-item list-group-item-action"; li.innerHTML = `<strong>${c.nome_completo}</strong>`; li.onclick = () => { document.getElementById('cerca-consegna').value = c.nome_completo; list.innerHTML = ''; cercaOrdini(null, c.id); }; list.appendChild(li); }); } });
+    document.getElementById('cerca-consegna').addEventListener('keydown', function(e) { let x = document.getElementById('suggerimenti-consegna').getElementsByTagName('li'); if (x.length > 0) { handleArrowNav(e, 'suggerimenti-consegna', idx => { focusConsegna = idx; }, focusConsegna); } else if (e.key === 'Enter') { const val = this.value; if(val.match(/^\d+$/)) cercaOrdini(val); } });
+
+    let currentOrdRow = -1;
+    document.addEventListener('keydown', function(e) { if(document.activeElement.id === 'cerca-consegna') return; let rows = document.querySelectorAll('#tabella-ordini tr'); if(rows.length === 0) return; if (e.key === 'ArrowDown') { currentOrdRow++; highlightRow(rows); } else if (e.key === 'ArrowUp') { currentOrdRow--; highlightRow(rows); } else if (e.key === 'Enter') { e.preventDefault(); if (currentOrdRow > -1 && rows[currentOrdRow]) rows[currentOrdRow].querySelector('button').click(); } });
+    function highlightRow(rows) { rows.forEach(r => r.classList.remove('table-active-row')); if (currentOrdRow >= rows.length) currentOrdRow = 0; if (currentOrdRow < 0) currentOrdRow = (rows.length - 1); rows[currentOrdRow].classList.add('table-active-row'); rows[currentOrdRow].scrollIntoView({block: 'nearest'}); }
+
+    async function cercaOrdini(numScontrino = null, clienteId = null) { 
+        let url = `/cerca_ordini_aperti?`; if (numScontrino) url += `q=${numScontrino}`; if (clienteId) url += `cliente_id=${clienteId}`; 
+        const res = await fetch(url); const ordini = await res.json(); const tb = document.getElementById('tabella-ordini'); tb.innerHTML=''; 
+        ordini.forEach(o=>{ 
+            let pagBadge = o.pagato ? '<span class="badge bg-success">SALDATO</span>' : `<span class="badge bg-danger">DA PAGARE: €${o.residuo.toFixed(2)}</span>`; 
+            if (o.acconto > 0 && !o.pagato) pagBadge += ` <span class="badge bg-warning text-dark">Acc. €${o.acconto.toFixed(2)}</span>`; 
+            let posTxt = o.posizioni ? `<span class="badge bg-dark">POS: ${o.posizioni}</span>` : '-'; 
+            let statoLav = o.tutto_pronto ? '<span class="badge bg-success">🟢 PRONTO</span>' : '<span class="badge bg-warning text-dark">🟡 IN LAV.</span>';
+
+            tb.innerHTML+=`<tr>
+                <td><strong>#${o.num_scontrino}</strong></td>
+                <td>${o.data_ritiro}</td>
+                <td>${o.cliente_nome}</td>
+                <td>${statoLav}</td>
+                <td>${pagBadge}</td>
+                <td>${posTxt}</td>
+                <td>
+                    <button class="btn btn-primary btn-sm me-1" onclick="apriDettaglioConsegna(${o.id}, '${o.cliente_nome}', ${o.num_scontrino})" title="Apri Ordine"><i class="bi bi-eye"></i></button>
+                    <button class="btn btn-outline-secondary btn-sm me-1" onclick="ristampaOrdine(${o.id}, 'scontrino')" title="Ristampa Scontrino">🖨️</button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="ristampaOrdine(${o.id}, 'etichette')" title="Ristampa Etichette">🏷️</button>
+                </td>
+            </tr>`; 
+        }); 
+        currentOrdRow = -1; 
+    }
+
+    // --- NUOVA FUNZIONE RISTAMPA ---
+    async function ristampaOrdine(id, tipo) {
+        if(!confirm(`Vuoi ristampare ${tipo.toUpperCase()}?`)) return;
+        try {
+            const res = await fetch('/api/ristampa_ordine', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: id, tipo: tipo})
+            });
+            const data = await res.json();
+            if(data.status === 'success') alert(data.msg);
+            else alert("Errore: " + data.msg);
+        } catch(e) {
+            alert("Errore di comunicazione col server");
+        }
+    }
+
+    async function apriDettaglioConsegna(id, nome, num) { 
+        ordineConsegnaId = id; document.getElementById('cons-id').innerText = num; document.getElementById('cons-cliente').innerText = nome; document.getElementById('sconto-consegna').value = 0; 
+        const res = await fetch(`/get_dettagli_ordine/${id}`); const data = await res.json(); cacheCapiConsegna = data.capi; cacheInfoOrdine = data.info; 
+        const btnFiscale = document.getElementById('btn-consegna-fiscale'); 
+        if(data.info.fiscale_desk === 1) btnFiscale.style.display = 'none'; else btnFiscale.style.display = 'block'; 
+
+        // GESTIONE BOTTONE TOGGLE PAGAMENTO
+        const btnToggle = document.getElementById('btn-toggle-pay');
+        if (data.info.pagato) { btnToggle.innerText = "Segna come NON PAGATO"; btnToggle.className = "btn btn-outline-danger fw-bold btn-sm"; } 
+        else { btnToggle.innerText = "Segna come PAGATO"; btnToggle.className = "btn btn-outline-success fw-bold btn-sm"; }
+        
+        renderConsegnaList(); 
+        if(!modalConsegnaObj) modalConsegnaObj = new bootstrap.Modal(document.getElementById('modalConsegna')); 
+        modalConsegnaObj.show(); 
+        document.getElementById('modalConsegna').addEventListener('hidden.bs.modal', function () {
+            if(!document.getElementById('view-consegna').classList.contains('hidden')) { if(lastSearchQuery.type === 'num') cercaOrdini(lastSearchQuery.val, null); else if(lastSearchQuery.type === 'id') cercaOrdini(null, lastSearchQuery.val); }
+            else if(clienteCorrente) { selezionaCliente(clienteCorrente); }
+        }, { once: true });
+    }
+    
+    // --- NUOVA FUNZIONE TOGGLE PAGAMENTO ---
+    async function toggleStatoPagamento() {
+        if(!confirm("Vuoi cambiare lo stato del pagamento (Pagato <-> Da Pagare)?")) return;
+        await fetch('/api/toggle_stato_pagamento', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ordine_id: ordineConsegnaId})});
+        bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide();
+        cercaOrdini(document.getElementById('cons-id').innerText); // Ricarica tabella
+    }
+
+    function renderConsegnaList() { const ul = document.getElementById('cons-lista'); ul.innerHTML = ''; cacheCapiConsegna.forEach(c => { let checked = c.ritirato ? 'checked disabled' : ''; let label = c.ritirato ? '(Già Ritirato)' : ''; let editBtn = !c.ritirato ? `<button class="btn btn-sm btn-outline-warning ms-2" onclick="apriEditCapo(${c.id}, '${c.capo}', ${c.prezzo})">✏️</button>` : ''; 
+        let tappetoInput = ''; if(c.capo.toLowerCase().includes('tappeto') && !c.ritirato) { tappetoInput = `<div class="input-group input-group-sm mt-1" style="width: 150px;"><span class="input-group-text fw-bold">KG</span><input type="number" class="form-control fw-bold" placeholder="0.0" step="0.1" onchange="aggiornaPrezzoTappeto(${c.id}, this.value)"></div>`; }
+        let statusDot = c.stato_lavorazione ? '<span class="status-dot status-verde"></span>' : '<span class="status-dot status-giallo"></span>'; 
+        let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena} (${c.tipo_stoccaggio || 'Nastro'})</span>` : ''; 
+        ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[Cod: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}</div></li>`; }); calcolaSaldoParziale(); }
+    
+    async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
+
+    function calcolaSaldoParziale() { let valoreNuovaSelezione = 0; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); if (valoreNuovaSelezione === 0) { mostraIncasso(0); return; } let valoreGiaRitirato = 0; cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); mostraIncasso(daIncassare); }
+    function mostraIncasso(val) { const span = document.getElementById('cons-residuo-parziale'); span.innerText = "€ " + val.toFixed(2); span.setAttribute('data-val', val); span.className = val === 0 ? "fw-bold fs-1 text-success" : "fw-bold fs-1 text-danger"; }
+    function toggleSelezionaTutto() { let checkboxes = document.querySelectorAll('.chk-ritiro:not(:disabled)'); let allChecked = Array.from(checkboxes).every(c => c.checked); checkboxes.forEach(chk => chk.checked = !allChecked); calcolaSaldoParziale(); }
+    function apriEditCapo(id, nome, prezzo) { document.getElementById('edit-id-capo').value = id; document.getElementById('edit-nome-capo').value = nome; document.getElementById('edit-prezzo-capo').value = prezzo; bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); new bootstrap.Modal(document.getElementById('modalEditConsegna')).show(); }
+    async function salvaModificaCapo() { const id = document.getElementById('edit-id-capo').value; const nome = document.getElementById('edit-nome-capo').value; const prezzo = parseFloat(document.getElementById('edit-prezzo-capo').value); await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: nome, prezzo: prezzo}) }); bootstrap.Modal.getInstance(document.getElementById('modalEditConsegna')).hide(); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
+    async function confermaConsegna(stampaFiscale) { let ids = []; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); if (ids.length === 0) return alert("Seleziona almeno un capo!"); let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; if (stampaFiscale) { if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)}?`)) return; } else { if(!confirm("Consegna SENZA scontrino?")) return; } const res = await fetch('/consegna_items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, incasso: incasso, sconto_extra: scontoExtra, stampa_fiscale: stampaFiscale}) }); const data = await res.json(); if(data.msg) alert(data.msg); bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); document.getElementById('cerca-consegna').value = ''; document.getElementById('tabella-ordini').innerHTML = ''; }
     
     // --- GESTIONE IMPOSTAZIONI E AGGIORNAMENTO ---
     async function apriImpostazioni() { 
@@ -541,6 +652,7 @@
             document.getElementById('conf-size-footer').value = d.font_footer || 'norm';
 
             // --- CARICA VALORI ETICHETTA ---
+            if(document.getElementById('conf-label-text')) document.getElementById('conf-label-text').value = d.label_custom_text || '';
             if(document.getElementById('conf-font-row1')) document.getElementById('conf-font-row1').value = d.font_label_row1 || 'huge';
             if(document.getElementById('conf-font-row2')) document.getElementById('conf-font-row2').value = d.font_label_row2 || 'huge';
             if(document.getElementById('conf-font-row3')) document.getElementById('conf-font-row3').value = d.font_label_row3 || 'norm';
@@ -594,25 +706,30 @@
     }
 
     async function salvaImpostazioniSenzaReload() {
+        // Safe getter per evitare crash se l'elemento HTML non esiste
+        const getVal = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+        const getChk = (id) => { const el = document.getElementById(id); return el ? (el.checked ? "1" : "0") : "0"; };
+
         const dati={
-            printer_star: document.getElementById('conf-star').value, 
-            port_labels: document.getElementById('conf-labels').value, 
-            ip_fiscal: document.getElementById('conf-ip').value, 
-            fiscal_always: document.getElementById('conf-fiscal-always').checked?"1":"0",
-            ticket_header: document.getElementById('conf-header').value,
-            ticket_footer: document.getElementById('conf-footer').value,
-            print_logo: document.getElementById('conf-print-logo').checked ? "1" : "0",
-            font_header: document.getElementById('conf-size-header').value,
-            font_num: document.getElementById('conf-size-num').value,
-            font_customer: document.getElementById('conf-size-cust').value,
-            font_items: document.getElementById('conf-size-item').value,
-            font_total: document.getElementById('conf-size-total').value, 
-            font_footer: document.getElementById('conf-size-footer').value,
-            font_label_row1: document.getElementById('conf-font-row1').value,
-            font_label_row2: document.getElementById('conf-font-row2').value,
-            font_label_row3: document.getElementById('conf-font-row3').value,
-            font_label_row4: document.getElementById('conf-font-row4').value,
-            label_feed: document.getElementById('conf-label-feed').value
+            printer_star: getVal('conf-star'), 
+            port_labels: getVal('conf-labels'), 
+            ip_fiscal: getVal('conf-ip'), 
+            fiscal_always: getChk('conf-fiscal-always'),
+            ticket_header: getVal('conf-header'),
+            ticket_footer: getVal('conf-footer'),
+            print_logo: getChk('conf-print-logo'),
+            font_header: getVal('conf-size-header'),
+            font_num: getVal('conf-size-num'),
+            font_customer: getVal('conf-size-cust'),
+            font_items: getVal('conf-size-item'),
+            font_total: getVal('conf-size-total'), 
+            font_footer: getVal('conf-size-footer'),
+            label_custom_text: getVal('conf-label-text'),
+            font_label_row1: getVal('conf-font-row1'),
+            font_label_row2: getVal('conf-font-row2'),
+            font_label_row3: getVal('conf-font-row3'),
+            font_label_row4: getVal('conf-font-row4'),
+            label_feed: getVal('conf-label-feed')
         }; 
         await fetch('/api/save_settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dati)}); 
     }
@@ -683,11 +800,8 @@
         const cat = document.getElementById('filtro-categoria').value;
         const tbody = document.getElementById('tabella-listino');
         tbody.innerHTML = '';
-        const items = listinoRaw.filter(x => !cat || x.categoria === cat);
-        
-        items.forEach(x => {
-            let iconaStoccaggio = x.tipo_stoccaggio === 'Scaffale' ? '📦 Scaffale' : '🔄 Nastro';
-            tbody.innerHTML += `<tr data-id="${x.id}"><td class="drag-handle"><i class="bi bi-list"></i> ${x.ordine || 0}</td><td>${x.capo}<br><small class="text-muted">${x.categoria}</small></td><td>${iconaStoccaggio}</td><td>€ ${x.prezzo.toFixed(2)}</td><td><button class="btn btn-sm btn-warning" onclick="modificaCapoListino(${x.id})"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-danger" onclick="eliminaCapoListino(${x.id})"><i class="bi bi-trash"></i></button></td></tr>`;
+        listinoRaw.filter(x => !cat || x.categoria === cat).forEach(x => {
+            tbody.innerHTML += `<tr data-id="${x.id}"><td class="drag-handle"><i class="bi bi-list"></i> ${x.ordine || 0}</td><td>${x.capo}<br><small class="text-muted">${x.categoria}</small></td><td>${x.tipo_stoccaggio || 'Nastro'}</td><td>€ ${x.prezzo.toFixed(2)}</td><td><button class="btn btn-sm btn-warning" onclick="modificaCapoListino(${x.id})"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-danger ms-1" onclick="eliminaCapoListino(${x.id})"><i class="bi bi-trash"></i></button></td></tr>`;
         });
 
         if(sortableInstance) sortableInstance.destroy();
@@ -700,48 +814,13 @@
             }
         });
     }
-    
-    async function salvaNuovoOrdineListino() {
-        const rows = document.querySelectorAll('#tabella-listino tr');
-        let ids = [];
-        rows.forEach(r => ids.push(r.getAttribute('data-id')));
-        
-        await fetch('/api/aggiorna_ordine_listino', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ordine_ids: ids})
-        });
-        const r2 = await fetch('/api/get_listino_raw'); 
-        listinoRaw = await r2.json();
-    }
 
-    function apriModalAggiungiCapo() { 
-        document.getElementById('edit-listino-id').value = ''; 
-        document.getElementById('edit-listino-cat').value = ''; 
-        document.getElementById('edit-listino-nome').value = ''; 
-        document.getElementById('edit-listino-prezzo').value = ''; 
-        document.getElementById('edit-listino-tipo').value = 'Nastro'; 
-        new bootstrap.Modal(document.getElementById('modalCapo')).show(); 
-    }
+    function apriModalAggiungiCapo() { document.getElementById('edit-listino-id').value = ''; document.getElementById('edit-listino-cat').value = ''; document.getElementById('edit-listino-nome').value = ''; document.getElementById('edit-listino-prezzo').value = ''; document.getElementById('edit-listino-tipo').value = 'Nastro'; new bootstrap.Modal(document.getElementById('modalCapo')).show(); }
 
-    function modificaCapoListino(id) { 
-        const item = listinoRaw.find(x => x.id === id); 
-        document.getElementById('edit-listino-id').value = item.id; 
-        document.getElementById('edit-listino-cat').value = item.categoria; 
-        document.getElementById('edit-listino-nome').value = item.capo; 
-        document.getElementById('edit-listino-prezzo').value = item.prezzo; 
-        document.getElementById('edit-listino-tipo').value = item.tipo_stoccaggio || 'Nastro'; 
-        new bootstrap.Modal(document.getElementById('modalCapo')).show(); 
-    }
+    function modificaCapoListino(id) { const item = listinoRaw.find(x => x.id === id); document.getElementById('edit-listino-id').value = item.id; document.getElementById('edit-listino-cat').value = item.categoria; document.getElementById('edit-listino-nome').value = item.capo; document.getElementById('edit-listino-prezzo').value = item.prezzo; document.getElementById('edit-listino-tipo').value = item.tipo_stoccaggio || 'Nastro'; new bootstrap.Modal(document.getElementById('modalCapo')).show(); }
 
     async function salvaCapoListino() {
-        const d = { 
-            id: document.getElementById('edit-listino-id').value, 
-            categoria: document.getElementById('edit-listino-cat').value, 
-            capo: document.getElementById('edit-listino-nome').value, 
-            prezzo: document.getElementById('edit-listino-prezzo').value,
-            tipo_stoccaggio: document.getElementById('edit-listino-tipo').value
-        };
+        const d = { id: document.getElementById('edit-listino-id').value, categoria: document.getElementById('edit-listino-cat').value, capo: document.getElementById('edit-listino-nome').value, prezzo: document.getElementById('edit-listino-prezzo').value, tipo_stoccaggio: document.getElementById('edit-listino-tipo').value };
         if(!d.categoria || !d.capo || !d.prezzo) return alert("Compila tutti i campi!");
         await fetch('/api/save_item_listino', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)});
         bootstrap.Modal.getInstance(document.getElementById('modalCapo')).hide();
@@ -776,184 +855,18 @@
         const data = await res.json(); alert(data.msg); document.getElementById('del-id-capo').value = '';
     }
 
-    // --- NUOVA LOGICA: PAGAMENTO RICONSEGNA ---
-    let metodoConsegnaScelto = 'Contanti';
-
-    function selectMetodoConsegna(m) {
-        metodoConsegnaScelto = m;
-        document.getElementById('opt-cons-contanti').classList.remove('pay-selected');
-        document.getElementById('opt-cons-carta').classList.remove('pay-selected');
-        if(m === 'Contanti') document.getElementById('opt-cons-contanti').classList.add('pay-selected');
-        else document.getElementById('opt-cons-carta').classList.add('pay-selected');
-    }
-
-    let ordineProntiId = null;
-
-    async function cercaPerScontrino() {
-        const val = document.getElementById('input-pronti-scontrino').value;
-        if(!val) return;
-        eseguiRicercaPronti('ordine', val);
-    }
-
-    async function cercaPerCapo() {
-        const val = document.getElementById('input-pronti-capo').value;
-        if(!val) return;
-        eseguiRicercaPronti('capo', val);
-    }
-
-    async function eseguiRicercaPronti(tipo, valore) {
-        const res = await fetch('/get_items_scontrino', {
-            method: 'POST', 
-            headers: {'Content-Type':'application/json'}, 
-            body: JSON.stringify({tipo: tipo, valore: valore})
-        }); 
+    async function salvaNuovoOrdineListino() {
+        const rows = document.querySelectorAll('#tabella-listino tr');
+        let ids = [];
+        rows.forEach(r => ids.push(r.getAttribute('data-id')));
         
-        const d = await res.json(); 
-        if(d.status === 'error') { alert(d.msg); return; } 
-        
-        ordineProntiId = d.ordine_id; 
-        const ul = document.getElementById('lista-pronti'); 
-        
-        if(document.getElementById('input-pronti-scontrino').getAttribute('data-last-ord') != ordineProntiId) {
-             ul.innerHTML = '';
-        }
-        document.getElementById('input-pronti-scontrino').setAttribute('data-last-ord', ordineProntiId);
-
-        if(ul.children.length === 0) {
-            d.items.forEach(i => {
-                ul.innerHTML += `<li class="list-group-item"><input class="form-check-input me-2 chk-pronto" type="checkbox" value="${i.id}"> ${i.capo} <small class="text-muted">[Cod: ${i.id}]</small></li>`;
-            });
-        }
-
-        d.items.forEach(i => {
-            let checkbox = ul.querySelector(`input[value="${i.id}"]`);
-            if(checkbox) {
-                if (tipo === 'ordine') { checkbox.checked = true; }
-                else if (tipo === 'capo' && i.id === d.target_item_id) { checkbox.checked = true; }
-            }
+        await fetch('/api/aggiorna_ordine_listino', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ordine_ids: ids})
         });
-        
-        document.getElementById('box-lista-pronti').style.display='block'; 
-        document.getElementById('input-catena').focus(); 
-        
-        if(tipo === 'capo') document.getElementById('input-pronti-capo').value = '';
-        if(tipo === 'ordine') document.getElementById('input-pronti-scontrino').value = '';
-    }
-
-    async function confermaPronti() { 
-        let ids = []; 
-        document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); 
-        const catena = document.getElementById('input-catena').value; 
-        
-        const res = await fetch('/conferma_pronti', {
-            method:'POST', 
-            headers:{'Content-Type':'application/json'}, 
-            body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})
-        }); 
-        
-        const data = await res.json();
-        if(data.status === 'error') {
-            alert(data.msg);
-        } else {
-            alert("Stati aggiornati!"); 
-            vaiHome(); 
-        }
-    }
-
-    let focusConsegna = -1;
-    document.getElementById('cerca-consegna').addEventListener('input', async function() { focusConsegna = -1; const val = this.value; const list = document.getElementById('suggerimenti-consegna'); const tableBody = document.getElementById('tabella-ordini'); list.innerHTML = ''; if (!val) { tableBody.innerHTML = ''; return; } if (val.match(/^\d+$/)) { cercaOrdini(val); list.innerHTML = ''; } else { const res = await fetch(`/cerca_cliente?q=${val}`); const data = await res.json(); data.forEach(c => { let li = document.createElement('li'); li.className = "list-group-item list-group-item-action"; li.innerHTML = `<strong>${c.nome_completo}</strong>`; li.onclick = () => { document.getElementById('cerca-consegna').value = c.nome_completo; list.innerHTML = ''; cercaOrdini(null, c.id); }; list.appendChild(li); }); } });
-    document.getElementById('cerca-consegna').addEventListener('keydown', function(e) { let x = document.getElementById('suggerimenti-consegna').getElementsByTagName('li'); if (x.length > 0) { handleArrowNav(e, 'suggerimenti-consegna', idx => { focusConsegna = idx; }, focusConsegna); } else if (e.key === 'Enter') { const val = this.value; if(val.match(/^\d+$/)) cercaOrdini(val); } });
-
-    let currentOrdRow = -1;
-    document.addEventListener('keydown', function(e) { if(document.activeElement.id === 'cerca-consegna') return; let rows = document.querySelectorAll('#tabella-ordini tr'); if(rows.length === 0) return; if (e.key === 'ArrowDown') { currentOrdRow++; highlightRow(rows); } else if (e.key === 'ArrowUp') { currentOrdRow--; highlightRow(rows); } else if (e.key === 'Enter') { e.preventDefault(); if (currentOrdRow > -1 && rows[currentOrdRow]) rows[currentOrdRow].querySelector('button').click(); } });
-    function highlightRow(rows) { rows.forEach(r => r.classList.remove('table-active-row')); if (currentOrdRow >= rows.length) currentOrdRow = 0; if (currentOrdRow < 0) currentOrdRow = (rows.length - 1); rows[currentOrdRow].classList.add('table-active-row'); rows[currentOrdRow].scrollIntoView({block: 'nearest'}); }
-
-    async function cercaOrdini(numScontrino = null, clienteId = null) { 
-        if(numScontrino) { lastSearchQuery = { type: 'num', val: numScontrino }; }
-        else if(clienteId) { lastSearchQuery = { type: 'id', val: clienteId }; }
-        let url = `/cerca_ordini_aperti?`; if (numScontrino) url += `q=${numScontrino}`; if (clienteId) url += `cliente_id=${clienteId}`; const res = await fetch(url); const ordini = await res.json(); const tb = document.getElementById('tabella-ordini'); tb.innerHTML=''; ordini.forEach(o=>{ let pagBadge = o.pagato ? '<span class="badge bg-success">SALDATO</span>' : `<span class="badge bg-danger">DA PAGARE: €${o.residuo.toFixed(2)}</span>`; if (o.acconto > 0 && !o.pagato) pagBadge += ` <span class="badge bg-warning text-dark">Acc. €${o.acconto.toFixed(2)}</span>`; let statusTotale = o.tutto_pronto ? '<span class="status-dot status-verde" style="height:20px;width:20px;"></span>' : '<span class="status-dot status-giallo" style="height:20px;width:20px;"></span>'; let posTxt = o.posizioni ? `<span class="badge bg-dark">POS: ${o.posizioni}</span>` : '-'; tb.innerHTML+=`<tr><td>${statusTotale}</td><td><strong>#${o.num_scontrino}</strong></td><td>${o.data_ritiro}</td><td>${o.cliente_nome}<br><small class="text-muted">${o.telefono||''}</small></td><td>${pagBadge}</td><td>${posTxt}</td><td><button class="btn btn-outline-primary btn-sm fw-bold" onclick="apriDettaglioConsegna(${o.id}, '${o.cliente_nome}', ${o.num_scontrino})">👁️ APRI</button></td></tr>`; }); currentOrdRow = -1; 
-    }
-    
-    async function apriDettaglioConsegna(id, nome, num) { 
-        ordineConsegnaId = id; document.getElementById('cons-id').innerText = num; document.getElementById('cons-cliente').innerText = nome; document.getElementById('sconto-consegna').value = 0; 
-        const res = await fetch(`/get_dettagli_ordine/${id}`); const data = await res.json(); 
-        cacheCapiConsegna = data.capi; cacheInfoOrdine = data.info; 
-        const btnFiscale = document.getElementById('btn-consegna-fiscale'); 
-        if(data.info.fiscale_desk === 1) btnFiscale.style.display = 'none'; else btnFiscale.style.display = 'block'; 
-        renderConsegnaList(); 
-        if(!modalConsegnaObj) modalConsegnaObj = new bootstrap.Modal(document.getElementById('modalConsegna'));
-        modalConsegnaObj.show(); 
-        document.getElementById('modalConsegna').addEventListener('hidden.bs.modal', function () {
-            if(!document.getElementById('view-consegna').classList.contains('hidden')) { if(lastSearchQuery.type === 'num') cercaOrdini(lastSearchQuery.val, null); else if(lastSearchQuery.type === 'id') cercaOrdini(null, lastSearchQuery.val); }
-            else if(clienteCorrente) { selezionaCliente(clienteCorrente); }
-        }, { once: true });
-    }
-    
-    function renderConsegnaList() { const ul = document.getElementById('cons-lista'); ul.innerHTML = ''; cacheCapiConsegna.forEach(c => { let checked = c.ritirato ? 'checked disabled' : ''; let label = c.ritirato ? '(Già Ritirato)' : ''; let editBtn = !c.ritirato ? `<button class="btn btn-sm btn-outline-warning ms-2" onclick="apriEditCapo(${c.id}, '${c.capo}', ${c.prezzo})">✏️</button>` : ''; 
-        let tappetoInput = ''; if(c.capo.toLowerCase().includes('tappeto') && !c.ritirato) { tappetoInput = `<div class="input-group input-group-sm mt-1" style="width: 150px;"><span class="input-group-text fw-bold">KG</span><input type="number" class="form-control fw-bold" placeholder="0.0" step="0.1" onchange="aggiornaPrezzoTappeto(${c.id}, this.value)"></div>`; }
-        let statusDot = c.stato_lavorazione ? '<span class="status-dot status-verde"></span>' : '<span class="status-dot status-giallo"></span>'; 
-        let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena} (${c.tipo_stoccaggio || 'Nastro'})</span>` : ''; 
-        ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[Cod: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}</div></li>`; }); calcolaSaldoParziale(); }
-    
-    async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
-
-    function calcolaSaldoParziale() { 
-        let valoreNuovaSelezione = 0; 
-        document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); 
-        
-        let valoreGiaRitirato = 0; 
-        cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); 
-        
-        let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); 
-        let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
-        let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); 
-        
-        mostraIncasso(daIncassare); 
-
-        // MOSTRA/NASCONDI BLOCCO PAGAMENTO
-        if (daIncassare > 0.01) {
-            document.getElementById('box-metodi-consegna').style.display = 'flex';
-            selectMetodoConsegna('Contanti'); // Reset a contanti di default
-        } else {
-            document.getElementById('box-metodi-consegna').style.display = 'none';
-        }
-    }
-    
-    function mostraIncasso(val) { const span = document.getElementById('cons-residuo-parziale'); span.innerText = "€ " + val.toFixed(2); span.setAttribute('data-val', val); span.className = val === 0 ? "fw-bold fs-1 text-success" : "fw-bold fs-1 text-danger"; }
-    function toggleSelezionaTutto() { let checkboxes = document.querySelectorAll('.chk-ritiro:not(:disabled)'); let allChecked = Array.from(checkboxes).every(c => c.checked); checkboxes.forEach(chk => chk.checked = !allChecked); calcolaSaldoParziale(); }
-    function apriEditCapo(id, nome, prezzo) { document.getElementById('edit-id-capo').value = id; document.getElementById('edit-nome-capo').value = nome; document.getElementById('edit-prezzo-capo').value = prezzo; bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); new bootstrap.Modal(document.getElementById('modalEditConsegna')).show(); }
-    async function salvaModificaCapo() { const id = document.getElementById('edit-id-capo').value; const nome = document.getElementById('edit-nome-capo').value; const prezzo = parseFloat(document.getElementById('edit-prezzo-capo').value); await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: nome, prezzo: prezzo}) }); bootstrap.Modal.getInstance(document.getElementById('modalEditConsegna')).hide(); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
-    async function confermaConsegna(stampaFiscale) { 
-        let ids = []; 
-        document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); 
-        if (ids.length === 0) return alert("Seleziona almeno un capo!"); 
-        
-        let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; 
-        let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
-        
-        if (stampaFiscale) { 
-            if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)}?`)) return; 
-        } else { 
-            if(!confirm("Consegna SENZA scontrino?")) return; 
-        } 
-        
-        const res = await fetch('/consegna_items', { 
-            method:'POST', 
-            headers:{'Content-Type':'application/json'}, 
-            body:JSON.stringify({
-                ids: ids, 
-                incasso: incasso, 
-                sconto_extra: scontoExtra, 
-                stampa_fiscale: stampaFiscale,
-                metodo_pagamento: metodoConsegnaScelto
-            }) 
-        }); 
-        
-        const data = await res.json(); 
-        if(data.msg) alert(data.msg); 
-        bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); 
-        document.getElementById('cerca-consegna').value = ''; 
-        document.getElementById('tabella-ordini').innerHTML = ''; 
+        const r2 = await fetch('/api/get_listino_raw'); 
+        listinoRaw = await r2.json();
     }
 </script>
 </body>

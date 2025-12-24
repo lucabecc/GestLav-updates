@@ -53,7 +53,8 @@ def get_db():
 
 def init_db():
     db_path = os.path.join(BASE_DIR, DB_NAME)
-    conn = get_db(); cursor = conn.cursor()
+    conn = get_db()
+    cursor = conn.cursor()
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT, telefono TEXT, indirizzo TEXT, citta TEXT, cap TEXT, data_nascita TEXT, note TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT)''')
@@ -61,24 +62,16 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
-    # MIGRATION: COLONNE EXTRA
-    try:
-        cursor.execute("SELECT ordine FROM listino LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0")
-        cursor.execute("UPDATE listino SET ordine = id")
+    # --- MIGRATION ---
+    try: cursor.execute("SELECT ordine FROM listino LIMIT 1")
+    except: cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0"); cursor.execute("UPDATE listino SET ordine = id")
         
-    try:
-        cursor.execute("SELECT tipo_stoccaggio FROM listino LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE listino ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
-        cursor.execute("UPDATE listino SET tipo_stoccaggio = 'Scaffale' WHERE categoria LIKE '%CASA%' OR categoria LIKE '%PRODOTTI%'")
+    try: cursor.execute("SELECT tipo_stoccaggio FROM listino LIMIT 1")
+    except: cursor.execute("ALTER TABLE listino ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'"); cursor.execute("UPDATE listino SET tipo_stoccaggio = 'Scaffale' WHERE categoria LIKE '%CASA%' OR categoria LIKE '%PRODOTTI%'")
 
-    try:
-        cursor.execute("SELECT tipo_stoccaggio FROM dettagli_ordine LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
-
+    try: cursor.execute("SELECT tipo_stoccaggio FROM dettagli_ordine LIMIT 1")
+    except: cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
+    
     conn.commit()
 
     defaults = [
@@ -86,17 +79,14 @@ def init_db():
         ("fiscal_always", "0"), ("last_reset_date", "2000-01-01 00:00:00"),
         ("ticket_header", f"LAVANDERIA\n{SEDE}\nVia Roma, 10 - Tel. 071.xxxxx"),
         ("ticket_footer", "Grazie e Arrivederci!"),
-        ("print_logo", "0"),
-        ("label_custom_text", SEDE),
+        ("print_logo", "0"), ("label_custom_text", SEDE),
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")         
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")          
     ]
     
-    for chiave, valore in defaults:
-        cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (chiave, valore))
-
+    for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
     cursor.execute("INSERT OR IGNORE INTO clienti (id, nome, cognome, telefono, citta) VALUES (1, 'CLIENTE', 'AL BANCO', '', '')")
     
     cursor.execute("SELECT COUNT(*) FROM listino")
@@ -104,25 +94,33 @@ def init_db():
         for idx, item in enumerate(LISTINO_DEFAULT):
             cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", (item[0], item[1], item[2], item[3], idx))
     
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     
-    ver_path = os.path.join(BASE_DIR, "version.txt")
-    if not os.path.exists(ver_path):
-        with open(ver_path, "w") as f: f.write("1.0")
+    if not os.path.exists(os.path.join(BASE_DIR, "version.txt")):
+        with open(os.path.join(BASE_DIR, "version.txt"), "w") as f: f.write("1.0")
 
 def get_setting(chiave):
-    conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT valore FROM settings WHERE chiave = ?", (chiave,)); res = cursor.fetchone(); conn.close()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT valore FROM settings WHERE chiave = ?", (chiave,))
+    res = cursor.fetchone()
+    conn.close()
     return res['valore'] if res else ""
 
 def set_setting(chiave, valore):
-    conn = get_db(); cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (chiave, valore) VALUES (?, ?)", (chiave, valore)); conn.commit(); conn.close()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (chiave, valore) VALUES (?, ?)", (chiave, valore))
+    conn.commit()
+    conn.close()
 
 def get_listino_dict():
-    conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT * FROM listino ORDER BY ordine ASC"); 
-    rows = cursor.fetchall(); conn.close()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM listino ORDER BY ordine ASC")
+    rows = cursor.fetchall()
+    conn.close()
     listino_dict = {}
     for row in rows:
         if row['categoria'] not in listino_dict: listino_dict[row['categoria']] = {}
@@ -130,10 +128,17 @@ def get_listino_dict():
     return listino_dict
 
 def esegui_chiusura_fiscale():
-    ip = get_setting("ip_fiscal"); print(f"Tentativo chiusura fiscale su IP: {ip}")
+    ip = get_setting("ip_fiscal")
+    print(f"Tentativo chiusura fiscale su IP: {ip}")
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(10); s.connect((ip, 9100))
-        s.send(b"\x18"); time.sleep(1); s.send(b"1F\r\n"); time.sleep(2); s.close()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(10)
+        s.connect((ip, 9100))
+        s.send(b"\x18")
+        time.sleep(1)
+        s.send(b"1F\r\n")
+        time.sleep(2)
+        s.close()
         return True, "Chiusura Inviata!"
     except Exception as e: return False, f"Errore: {str(e)}"
 
@@ -163,18 +168,10 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
     f_row2 = get_label_font_command(get_setting("font_label_row2") or "huge")
     f_row3 = get_label_font_command(get_setting("font_label_row3") or "norm")
     
-    try:
-        feed_str = get_setting("label_feed")
-        feed_lines = int(feed_str) if feed_str else 12
-    except:
-        feed_lines = 12
+    try: feed_lines = int(get_setting("label_feed") or 12)
+    except: feed_lines = 12
     
-    CMD_CUT = b'\x1bi' 
-    SPACE_COMPACT = b'\x1b3\x12' 
-    BOLD_ON = b'\x1bE\x01'
-    BOLD_OFF = b'\x1bE\x00'
-    ALIGN_LEFT = b'\x1ba\x00'
-    CP_PC858 = b'\x1bt\x13'
+    CMD_CUT = b'\x1bi'; SPACE_COMPACT = b'\x1b3\x12'; BOLD_ON = b'\x1bE\x01'; BOLD_OFF = b'\x1bE\x00'; ALIGN_LEFT = b'\x1ba\x00'; CP_PC858 = b'\x1bt\x13'
 
     try:
         def enc(t): return t.encode('cp858', errors='replace')
@@ -198,8 +195,7 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
             riga_capo = f"{item['nome'][:18]} ({i}/{tot})"
             riga_completa = f"{riga_capo} R:{data_ritiro_str}"
             write(f_row3 + BOLD_ON + enc(f"{riga_completa}\n") + BOLD_OFF)
-            write(b'\x1bd' + bytes([feed_lines])) 
-            write(CMD_CUT)
+            write(b'\x1bd' + bytes([feed_lines])); write(CMD_CUT)
         close()
         return True
     except Exception as e: return False
@@ -395,83 +391,114 @@ def cerca_ordini_aperti():
 @app.route('/get_dettagli_ordine/<int:ordine_id>')
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone(); info = {'totale_ordine': res[0], 'totale_versato': res[1], 'fiscale_emesso': res[2], 'fiscale_desk': res[3]}
+    cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk, pagato FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone()
+    info = {'totale_ordine': res[0], 'totale_versato': res[1], 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': res[4]}
     cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
 
-# --- MODIFICA FONDAMENTALE PER PAGAMENTO RICONSEGNA ---
 @app.route('/consegna_items', methods=['POST'])
 def consegna_items():
-    ids = request.json.get('ids', [])
-    incasso = float(request.json.get('incasso', 0))
-    sconto_extra = float(request.json.get('sconto_extra', 0))
-    richiesta_fiscale = request.json.get('stampa_fiscale', False)
-    metodo = request.json.get('metodo_pagamento', '') # NUOVO PARAMETRO
-    
+    ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); metodo = request.json.get('metodo_pagamento', '')
     conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
-    
     for item_id in ids:
-        cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,))
-        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,))
-        capi_ritirati.append(dict(cursor.fetchone()))
-    
+        cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,)); cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
     msg = "Nessuna stampa."
     if ids:
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
-        ordine_id = cursor.fetchone()[0]
-        
-        if sconto_extra > 0: 
-            cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
-        
-        # AGGIORNAMENTO INCASSO E METODO PAGAMENTO
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); ordine_id = cursor.fetchone()[0]
+        if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
         if incasso > 0: 
-            if metodo:
-                 cursor.execute("UPDATE ordini SET acconto = acconto + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
-            else:
-                 cursor.execute("UPDATE ordini SET acconto = acconto + ? WHERE id = ?", (incasso, ordine_id))
-
-        # Controllo se tutto saldato
-        cursor.execute("SELECT totale, acconto FROM ordini WHERE id = ?", (ordine_id,))
-        r = cursor.fetchone()
-        if r['acconto'] >= r['totale'] - 0.01: 
-            cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
-            
-        # Controllo se tutto consegnato
+            if metodo: cursor.execute("UPDATE ordini SET acconto = acconto + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
+            else: cursor.execute("UPDATE ordini SET acconto = acconto + ? WHERE id = ?", (incasso, ordine_id))
+        cursor.execute("SELECT totale, acconto FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
+        if r['acconto'] >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
-        if cursor.fetchone()[0] == 0: 
-            cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
-            
+        if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,)); msg = "✅ Scontrino Fiscale Stampato!"
-            
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
-# --- NUOVA FUNZIONE CON CONTROLLO COLLISIONI ---
+@app.route('/salva_ordine', methods=['POST'])
+def salva_ordine():
+    d = request.json; listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
+    carrello, data_ritiro_raw = d['carrello'], d['data_ritiro']
+    sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
+    pagato, metodo = d['pagato'], d['metodo']
+    dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
+    data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
+    totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
+    solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
+    if acconto >= totale: pagato = True
+    else: pagato = False
+    if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
+    conn = get_db(); cursor = conn.cursor()
+    last_reset = get_setting("last_reset_date")
+    cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
+    stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
+    if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
+    fiscale_desk_val = 1 if stampa_ora else 0
+    cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione'))
+    oid = cursor.lastrowid
+    stato_lavorazione = 1 if solo_prodotti else 0
+    items_con_id = []
+    for i in carrello: 
+        cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione) VALUES (?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione))
+        item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
+    conn.commit(); conn.close()
+    if not solo_prodotti: 
+        stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo)
+        stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+    return jsonify({"status": "success", "id_ordine": oid})
+
+@app.route('/sospendi_ordine', methods=['POST'])
+def sospendi_ordine():
+    d=request.json; conn=get_db(); cursor=conn.cursor()
+    cursor.execute("INSERT INTO ordini (cliente_id, data_ingresso, data_ritiro, totale, stato, sede) VALUES (?, ?, ?, ?, 'Sospeso', ?)", (d['cliente_id'], datetime.now(), d['data_ritiro'], 0, SEDE))
+    oid=cursor.lastrowid
+    for i in d['carrello']: cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo) VALUES (?, ?, ?)", (oid, i['nome'], i['prezzo']))
+    conn.commit(); conn.close(); return jsonify({'status': 'success'})
+
+@app.route('/recupera_sospesi')
+def recupera_sospesi():
+    conn=get_db(); cursor=conn.cursor()
+    cursor.execute("SELECT o.id, c.nome, c.cognome, o.data_ingresso FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE o.stato = 'Sospeso' ORDER BY o.id DESC")
+    r=[dict(x) for x in cursor.fetchall()]; conn.close(); return jsonify(r)
+
+@app.route('/carica_sospeso', methods=['POST'])
+def carica_sospeso():
+    oid=request.json['id']; conn=get_db(); cursor=conn.cursor()
+    cursor.execute("SELECT * FROM ordini WHERE id=?",(oid,)); o=dict(cursor.fetchone())
+    cursor.execute("SELECT * FROM clienti WHERE id=?",(o['cliente_id'],)); c=dict(cursor.fetchone()); c['nome_completo']=f"{c['nome']} {c['cognome'] or ''}".strip()
+    cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id=?",(oid,)); l=[dict(x) for x in cursor.fetchall()]
+    cursor.execute("DELETE FROM dettagli_ordine WHERE ordine_id=?",(oid,)); cursor.execute("DELETE FROM ordini WHERE id=?",(oid,)); conn.commit(); conn.close()
+    return jsonify({'cliente':c, 'carrello':l, 'data_ritiro':o['data_ritiro']})
+
+@app.route('/get_items_scontrino', methods=['POST'])
+def get_items_scontrino():
+    tipo = request.json.get('tipo'); valore = request.json.get('valore'); conn = get_db(); cursor = conn.cursor()
+    target_item_id = None; order_id = None
+    if tipo == 'ordine':
+        cursor.execute("SELECT id FROM ordini WHERE num_scontrino = ? AND stato != 'Consegnato'", (valore,)); res = cursor.fetchone()
+        if res: order_id = res[0]
+    elif tipo == 'capo':
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ? AND ritirato = 0", (valore,)); res = cursor.fetchone()
+        if res: order_id = res[0]; target_item_id = int(valore)
+    if not order_id: conn.close(); return jsonify({'status': 'error', 'msg': 'Nessun risultato trovato.'})
+    cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (order_id,)); capi = [dict(row) for row in cursor.fetchall()]; conn.close()
+    return jsonify({'status': 'success', 'items': capi, 'ordine_id': order_id, 'target_item_id': target_item_id})
+
 @app.route('/conferma_pronti', methods=['POST'])
 def conferma_pronti():
-    ids = request.json.get('ids', [])
-    oid = request.json.get('ordine_id')
-    catena = request.json.get('catena', '')
-    conn = get_db(); cursor = conn.cursor()
-
+    ids = request.json.get('ids', []); oid = request.json.get('ordine_id'); catena = request.json.get('catena', ''); conn = get_db(); cursor = conn.cursor()
     if catena and ids:
-        placeholders = ','.join(['?']*len(ids))
-        cursor.execute(f"SELECT DISTINCT tipo_stoccaggio FROM dettagli_ordine WHERE id IN ({placeholders})", ids)
-        types = [row[0] for row in cursor.fetchall()]
-
+        placeholders = ','.join(['?']*len(ids)); cursor.execute(f"SELECT DISTINCT tipo_stoccaggio FROM dettagli_ordine WHERE id IN ({placeholders})", ids); types = [row[0] for row in cursor.fetchall()]
         for t in types:
-            sql_check = """SELECT o.num_scontrino FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE d.numero_catena = ? AND d.tipo_stoccaggio = ? AND d.ritirato = 0 AND d.ordine_id != ? LIMIT 1"""
-            cursor.execute(sql_check, (catena, t, oid))
+            cursor.execute("SELECT o.num_scontrino FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE d.numero_catena = ? AND d.tipo_stoccaggio = ? AND d.ritirato = 0 AND d.ordine_id != ? LIMIT 1", (catena, t, oid))
             conflict = cursor.fetchone()
-            if conflict:
-                conn.close()
-                return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena} ({t}) OCCUPATA dall'ordine #{conflict[0]}!"})
-
+            if conflict: conn.close(); return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena} ({t}) OCCUPATA dall'ordine #{conflict[0]}!"})
     if ids:
         pl = ','.join(['?']*len(ids)); cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ? AND id NOT IN ({pl})", [oid] + ids)
         cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena] + ids)
     else: cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
-    
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
 @app.route('/modifica_capo_ordine', methods=['POST'])
@@ -482,18 +509,13 @@ def modifica_capo_ordine():
     nuovo_tot = cursor.fetchone()[0]; cursor.execute("UPDATE ordini SET totale = ? WHERE id = (SELECT ordine_id FROM dettagli_ordine WHERE id = ?)", (nuovo_tot, d['id']))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
-# --- SISTEMA AGGIORNAMENTO CON BACKUP ---
 @app.route('/api/check_update')
 def check_update():
     try:
-        v_file = os.path.join(BASE_DIR, "version.txt")
-        with open(v_file, "r") as f: local_ver = f.read().strip()
-        remote_url = GITHUB_REPO_BASE + "version.txt"
-        with urllib.request.urlopen(remote_url) as response: remote_ver = response.read().decode('utf-8').strip()
-        backup_path = os.path.join(BASE_DIR, "backup", "app.py")
-        has_backup = os.path.exists(backup_path)
-        if remote_ver != local_ver: return jsonify({'update_available': True, 'local': local_ver, 'remote': remote_ver, 'has_backup': has_backup})
-        return jsonify({'update_available': False, 'has_backup': has_backup})
+        with open(os.path.join(BASE_DIR, "version.txt"), "r") as f: local_ver = f.read().strip()
+        with urllib.request.urlopen(GITHUB_REPO_BASE + "version.txt") as response: remote_ver = response.read().decode('utf-8').strip()
+        has_backup = os.path.exists(os.path.join(BASE_DIR, "backup", "app.py"))
+        return jsonify({'update_available': remote_ver != local_ver, 'local': local_ver, 'remote': remote_ver, 'has_backup': has_backup})
     except Exception as e: return jsonify({'error': str(e)})
 
 @app.route('/api/perform_update', methods=['POST'])
@@ -504,16 +526,8 @@ def perform_update():
         shutil.copy(os.path.join(BASE_DIR, "app.py"), os.path.join(backup_dir, "app.py"))
         if os.path.exists(os.path.join(templates_dir, "index.html")): shutil.copy(os.path.join(templates_dir, "index.html"), os.path.join(backup_dir, "index.html"))
         if os.path.exists(os.path.join(BASE_DIR, "version.txt")): shutil.copy(os.path.join(BASE_DIR, "version.txt"), os.path.join(backup_dir, "version.txt"))
-        
-        # FIX NOT FOUND: Se non trova in /templates, cerca in root
         urllib.request.urlretrieve(GITHUB_REPO_BASE + "app.py", os.path.join(BASE_DIR, "app.py"))
-        if not os.path.exists(templates_dir): os.makedirs(templates_dir)
-        try:
-            urllib.request.urlretrieve(GITHUB_REPO_BASE + "templates/index.html", os.path.join(templates_dir, "index.html"))
-        except urllib.error.HTTPError as e:
-            if e.code == 404: urllib.request.urlretrieve(GITHUB_REPO_BASE + "index.html", os.path.join(templates_dir, "index.html"))
-            else: raise e
-        
+        urllib.request.urlretrieve(GITHUB_REPO_BASE + "templates/index.html", os.path.join(templates_dir, "index.html"))
         urllib.request.urlretrieve(GITHUB_REPO_BASE + "version.txt", os.path.join(BASE_DIR, "version.txt"))
         return jsonify({'status': 'success', 'msg': 'Aggiornamento completato!'})
     except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
@@ -522,36 +536,97 @@ def perform_update():
 def restore_backup():
     try:
         backup_dir = os.path.join(BASE_DIR, "backup"); templates_dir = os.path.join(BASE_DIR, "templates")
-        if not os.path.exists(os.path.join(backup_dir, "app.py")): return jsonify({'status':'error', 'msg':'Nessun backup trovato'})
         shutil.copy(os.path.join(backup_dir, "app.py"), os.path.join(BASE_DIR, "app.py"))
-        if os.path.exists(os.path.join(backup_dir, "index.html")): shutil.copy(os.path.join(backup_dir, "index.html"), os.path.join(templates_dir, "index.html"))
-        if os.path.exists(os.path.join(backup_dir, "version.txt")): shutil.copy(os.path.join(backup_dir, "version.txt"), os.path.join(BASE_DIR, "version.txt"))
-        return jsonify({'status':'success', 'msg':'Ripristino completato! Riavvia il programma.'})
+        shutil.copy(os.path.join(backup_dir, "index.html"), os.path.join(templates_dir, "index.html"))
+        return jsonify({'status':'success', 'msg':'Ripristino completato!'})
     except Exception as e: return jsonify({'status':'error', 'msg':str(e)})
 
-# --- NUOVA ROTTA TEST STAMPA ---
 @app.route('/api/test_print', methods=['POST'])
 def api_test_print():
     tipo = request.json.get('tipo')
-    fake_cart = [
-        {'nome': 'Camicia Test', 'prezzo': 5.00}, 
-        {'nome': 'Giacca Test', 'prezzo': 10.00}
-    ]
-    fake_date = datetime.now().strftime("%d/%m/%Y")
-    
-    if tipo == 'scontrino':
-        stampa_scontrino(
-            9999, fake_date, "MARIO ROSSI (TEST)", 
-            fake_cart, 15.00, 0, 0, "25/12", False, "Contanti"
-        )
-    elif tipo == 'etichetta':
-        # Simula ID fittizio per il test
-        items_con_id = [{'nome': 'Camicia Test', 'id': 9876}, {'nome': 'Giacca Test', 'id': 9877}]
-        stampa_etichette(
-            9999, items_con_id, "MARIO ROSSI", "25/12"
-        )
-        
+    fake_cart = [{'nome': 'Camicia Test', 'prezzo': 5.00}, {'nome': 'Giacca Test', 'prezzo': 10.00}]
+    if tipo == 'scontrino': stampa_scontrino(9999, datetime.now().strftime("%d/%m/%Y"), "TEST", fake_cart, 15.00, 0, 0, "25/12", False, "Contanti")
+    elif tipo == 'etichetta': stampa_etichette(9999, [{'nome': 'Camicia Test', 'id': 9876}, {'nome': 'Giacca Test', 'id': 9877}], "TEST", "25/12")
     return jsonify({'status': 'success'})
+
+@app.route('/api/toggle_stato_pagamento', methods=['POST'])
+def toggle_stato_pagamento():
+    oid = request.json.get('ordine_id')
+    conn = get_db(); cursor = conn.cursor()
+    cursor.execute("SELECT pagato, totale FROM ordini WHERE id = ?", (oid,))
+    res = cursor.fetchone()
+    if res:
+        nuovo_stato = 0 if res['pagato'] == 1 else 1
+        nuovo_acconto = res['totale'] if nuovo_stato == 1 else 0
+        cursor.execute("UPDATE ordini SET pagato = ?, acconto = ? WHERE id = ?", (nuovo_stato, nuovo_acconto, oid))
+        conn.commit()
+    conn.close()
+    return jsonify({'status': 'success'})
+
+@app.route('/api/ristampa_ordine', methods=['POST'])
+def ristampa_ordine():
+    try:
+        d = request.json
+        oid = d.get('id')
+        tipo = d.get('tipo') # 'scontrino' o 'etichette'
+        
+        conn = get_db(); cursor = conn.cursor()
+        
+        # Recupero Ordine
+        cursor.execute("SELECT * FROM ordini WHERE id = ?", (oid,))
+        ordine = cursor.fetchone()
+        if not ordine: return jsonify({'status': 'error', 'msg': 'Ordine non trovato'})
+        
+        # Recupero Cliente
+        cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
+        cliente = cursor.fetchone()
+        cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
+        
+        # Recupero Capi
+        cursor.execute("SELECT id, capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id = ?", (oid,))
+        carrello = [dict(row) for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        if tipo == 'scontrino':
+            # Ricalcolo totali per sicurezza
+            totale = ordine['totale']
+            sconto = ordine['sconto']
+            acconto = ordine['acconto']
+            pagato = (ordine['pagato'] == 1)
+            metodo = ordine['metodo_pagamento'] or "Contanti"
+            
+            data_ingresso_str = datetime.strptime(ordine['data_ingresso'].split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m %H:%M")
+            
+            ok = stampa_scontrino(
+                ordine['num_scontrino'], 
+                data_ingresso_str, 
+                cliente_nome, 
+                carrello, 
+                totale, 
+                sconto, 
+                acconto, 
+                ordine['data_ritiro'], 
+                pagato, 
+                metodo
+            )
+            if ok: return jsonify({'status': 'success', 'msg': 'Scontrino inviato alla stampante!'})
+            else: return jsonify({'status': 'error', 'msg': 'Errore stampa scontrino'})
+            
+        elif tipo == 'etichette':
+            ok = stampa_etichette(
+                ordine['num_scontrino'],
+                carrello, # contiene 'id' e 'nome'
+                cliente_nome,
+                ordine['data_ritiro']
+            )
+            if ok: return jsonify({'status': 'success', 'msg': 'Etichette inviate alla stampante!'})
+            else: return jsonify({'status': 'error', 'msg': 'Errore stampa etichette'})
+            
+        return jsonify({'status': 'error', 'msg': 'Tipo stampa non valido'})
+
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 if __name__ == '__main__': 
     init_db()
