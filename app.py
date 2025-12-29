@@ -75,9 +75,11 @@ def init_db():
     try: cursor.execute("SELECT is_approx_date FROM ordini LIMIT 1")
     except: cursor.execute("ALTER TABLE ordini ADD COLUMN is_approx_date INTEGER DEFAULT 0")
 
-    # MODIFICA: Aggiunta colonna preferenza_scontrino
     try: cursor.execute("SELECT preferenza_scontrino FROM clienti LIMIT 1")
     except: cursor.execute("ALTER TABLE clienti ADD COLUMN preferenza_scontrino TEXT DEFAULT 'stampa'")
+
+    try: cursor.execute("SELECT codice_lotteria FROM clienti LIMIT 1")
+    except: cursor.execute("ALTER TABLE clienti ADD COLUMN codice_lotteria TEXT DEFAULT ''")
 
     conn.commit()
 
@@ -90,7 +92,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")              
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                 
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -134,6 +136,8 @@ def get_listino_dict():
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
+# --- GESTIONE STAMPANTE FISCALE ---
+
 def esegui_chiusura_fiscale():
     ip = get_setting("ip_fiscal")
     print(f"Tentativo chiusura fiscale su IP: {ip}")
@@ -141,13 +145,74 @@ def esegui_chiusura_fiscale():
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(10)
         s.connect((ip, 9100))
-        s.send(b"\x18")
+        s.send(b"\x18") # Clear
         time.sleep(1)
-        s.send(b"1F\r\n")
+        s.send(b"1F\r\n") # Comando Chiusura (Tipico Custom/Epson)
         time.sleep(2)
         s.close()
         return True, "Chiusura Inviata!"
     except Exception as e: return False, f"Errore: {str(e)}"
+
+def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
+    """
+    Funzione POTENZIATA per risolvere il problema dei dati vecchi.
+    Pulisce il buffer e usa connessioni robuste.
+    """
+    ip = get_setting("ip_fiscal")
+    if not ip:
+        print("IP Fiscale non configurato.")
+        return False
+        
+    print(f"--- AVVIO STAMPA FISCALE SU {ip} ---")
+    print(f"DATI DA STAMPARE: {items}") # Log per debug: controlla qui se i dati sono giusti
+    
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) # Disabilita Nagle
+        s.settimeout(10) # Timeout più lungo
+        s.connect((ip, 9100))
+        
+        # 1. Pulizia Buffer in entrata (se c'è roba vecchia dalla stampante)
+        try:
+            s.settimeout(0.1)
+            s.recv(1024)
+        except:
+            pass
+        s.settimeout(10)
+
+        # 2. Comando Cancellazione preventivo (Pulisce transazioni appese)
+        s.sendall(b"\x18") 
+        time.sleep(0.5)
+        
+        # 3. Invio Articoli
+        # Formato tipico: "Descrizione" Prezzo Reparto *
+        for item in items:
+            # Pulizia caratteri descrizione per evitare errori protocollo
+            nome_pulito = ''.join(e for e in item['nome'] if e.isalnum() or e in ' .-*')
+            desc = nome_pulito[:20] 
+            prezzo = f"{item['prezzo']:.2f}"
+            
+            # Comando vendita (Protocollo Standard Xon/Xoff)
+            cmd = f'"{desc}" {prezzo} 1 *r\n' 
+            s.sendall(cmd.encode())
+            time.sleep(0.1) # Breve pausa per non intasare il buffer della stampante
+
+        # 4. Codice Lotteria
+        if codice_lotteria:
+            cmd_lotteria = f"C{codice_lotteria.upper()}\r\n"
+            s.sendall(cmd_lotteria.encode())
+            time.sleep(0.2)
+        
+        # 5. Chiusura / Totale
+        s.sendall(b"1T\r\n")
+        
+        time.sleep(0.5) # Aspetta che la stampante elabori
+        s.close()
+        print("--- STAMPA FISCALE INVIATA CORRETTAMENTE ---")
+        return True
+    except Exception as e:
+        print(f"ERRORE CRITICO STAMPA FISCALE: {e}")
+        return False
 
 # --- FONTS ---
 def get_star_font(size_name):
@@ -212,7 +277,10 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
         return True
     except Exception as e: return False
 
-def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx_date=False):
+def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx_date=False, codice_lotteria=""):
+    """
+    Questa funzione stampa SOLO lo scontrino di cortesia (non fiscale) sulla stampante Windows (Star).
+    """
     stampante = get_setting("printer_star")
     header_text = get_setting("ticket_header")
     footer_text = get_setting("ticket_footer")
@@ -242,7 +310,9 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
                 for r in header_text.split('\n'): buffer += enc(r) + b"\n"
             buffer += BOLD_OFF + S_NORM + ALIGN_LEFT + b"-" * 42 + b"\n"
             buffer += ALIGN_CENTER + S_NUM + BOLD_ON + enc(f"{num_visibile}\n") + BOLD_OFF + S_NORM + enc(f"Data: {data}\n") + ALIGN_LEFT
-            buffer += ALIGN_CENTER + S_CUST + BOLD_ON + enc(f"{cliente_nome[:20]}\n") + BOLD_OFF + S_NORM + ALIGN_LEFT + b"-" * 42 + b"\n"
+            buffer += ALIGN_CENTER + S_CUST + BOLD_ON + enc(f"{cliente_nome[:20]}\n") + BOLD_OFF + S_NORM
+            
+            buffer += ALIGN_LEFT + b"-" * 42 + b"\n"
             buffer += S_ITEM
             num_capi_tot = 0
             for item in carrello:
@@ -386,17 +456,23 @@ def get_cliente_rapido():
 @app.route('/crea_cliente', methods=['POST'])
 def crea_cliente():
     d = request.json; conn = get_db(); cursor = conn.cursor()
-    cursor.execute("INSERT INTO clienti (nome, cognome, telefono, indirizzo, citta, cap, data_nascita) VALUES (?, ?, ?, ?, ?, ?, ?)", (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita','')))
-    conn.commit(); new_id = cursor.lastrowid; conn.close(); return jsonify({'status': 'success', 'id': new_id, 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita',''), 'preferenza_scontrino': 'stampa'})
+    cursor.execute("INSERT INTO clienti (nome, cognome, telefono, indirizzo, citta, cap, data_nascita, codice_lotteria) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
+                   (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita',''), d.get('codice_lotteria','').upper()))
+    conn.commit(); new_id = cursor.lastrowid; conn.close(); 
+    return jsonify({'status': 'success', 'id': new_id, 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 
+                    'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 
+                    'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita',''), 
+                    'codice_lotteria': d.get('codice_lotteria','').upper(), 'preferenza_scontrino': 'stampa'})
 
-# --- NUOVA ROTTA PER MODIFICA CLIENTE ---
 @app.route('/modifica_cliente', methods=['POST'])
 def modifica_cliente():
     d = request.json; conn = get_db(); cursor = conn.cursor()
-    cursor.execute("UPDATE clienti SET nome=?, cognome=?, telefono=?, indirizzo=?, citta=?, cap=?, data_nascita=? WHERE id=?", 
-                   (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita',''), d.get('id')))
+    cursor.execute("UPDATE clienti SET nome=?, cognome=?, telefono=?, indirizzo=?, citta=?, cap=?, data_nascita=?, codice_lotteria=? WHERE id=?", 
+                   (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita',''), d.get('codice_lotteria','').upper(), d.get('id')))
     conn.commit(); conn.close()
-    return jsonify({'status': 'success', 'id': d.get('id'), 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita','')})
+    return jsonify({'status': 'success', 'id': d.get('id'), 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 
+                    'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 
+                    'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita',''), 'codice_lotteria': d.get('codice_lotteria','').upper()})
 
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
@@ -424,33 +500,61 @@ def get_dettagli_ordine(ordine_id):
 def consegna_items():
     ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); metodo = request.json.get('metodo_pagamento', '')
     conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
+    
+    # Recupera ordine_id dal primo item
+    ordine_id = None
+    if ids:
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
+        res = cursor.fetchone()
+        if res: ordine_id = res[0]
+
     for item_id in ids:
         cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,)); cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
+    
     msg = "Nessuna stampa."
-    if ids:
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); ordine_id = cursor.fetchone()[0]
+    if ordine_id:
         if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
         if incasso > 0: 
             if metodo: cursor.execute("UPDATE ordini SET acconto = acconto + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
             else: cursor.execute("UPDATE ordini SET acconto = acconto + ? WHERE id = ?", (incasso, ordine_id))
+        
         cursor.execute("SELECT totale, acconto FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
         if r['acconto'] >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
         if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
+        
+        # --- LOGICA STAMPA FISCALE ALLA CONSEGNA ---
         if richiesta_fiscale:
-            cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,)); msg = "✅ Scontrino Fiscale Stampato!"
+            cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,))
+            
+            # Recupera codice lotteria cliente
+            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,))
+            res_cli = cursor.fetchone()
+            cod_lotteria = res_cli[0] if res_cli else ""
+            
+            # Crea un carrello "fittizio" per la stampa fiscale dell'importo incassato
+            item_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+            
+            if incasso > 0:
+                success = stampa_fiscale_vendita(item_fiscale, incasso, cod_lotteria)
+                if success: msg = "✅ Scontrino Fiscale Stampato!"
+                else: msg = "❌ Errore Stampa Fiscale!"
+            else:
+                msg = "Importo 0, niente scontrino."
+                
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
 @app.route('/salva_ordine', methods=['POST'])
 def salva_ordine():
     d = request.json; listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    carrello, data_ritiro_raw = d['carrello'], d['data_ritiro']
+    # Qui ci assicuriamo di prendere i dati freschi dalla richiesta
+    carrello = d['carrello']
+    data_ritiro_raw = d['data_ritiro']
     sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
     pagato, metodo = d['pagato'], d['metodo']
     is_approx = d.get('is_approx', False)
     
-    # MODIFICA: Ricezione azione scelta
-    azione = d.get('azione', 'stampa') # stampa, whatsapp, email
+    azione = d.get('azione', 'stampa') 
 
     dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
     data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
@@ -461,13 +565,19 @@ def salva_ordine():
     if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
     conn = get_db(); cursor = conn.cursor()
     
-    # MODIFICA: Aggiorna preferenza cliente
     cursor.execute("UPDATE clienti SET preferenza_scontrino = ? WHERE id = ?", (azione, d['cliente_id']))
     
+    cursor.execute("SELECT codice_lotteria FROM clienti WHERE id = ?", (d['cliente_id'],))
+    res_cli = cursor.fetchone()
+    codice_lotteria = res_cli['codice_lotteria'] if res_cli else ""
+
     last_reset = get_setting("last_reset_date")
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
     stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
+    
+    # Se il cliente paga tutto subito (o prodotti vendita), stampiamo fiscale ora
     if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
+    
     fiscale_desk_val = 1 if stampa_ora else 0
     
     cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato, is_approx_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione', 1 if is_approx else 0))
@@ -479,17 +589,25 @@ def salva_ordine():
         item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
     conn.commit(); conn.close()
     
-    # MODIFICA: Logica di stampa condizionale
-    if not solo_prodotti:
-        # Se è STAMPA, stampa sia scontrino che etichette
-        if azione == 'stampa':
-            stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx)
-            stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+    # --- LOGICA STAMPA SCONTRINO FISCALE ---
+    if stampa_ora:
+        # Debug: stampiamo cosa stiamo per inviare alla funzione fiscale
+        print(f"DEBUG SALVA ORDINE: Invio fiscale di {len(carrello)} elementi.")
         
-        # Se è WHATSAPP o EMAIL, stampa SOLO le etichette, NON lo scontrino
+        if pagato:
+            stampa_fiscale_vendita(carrello, totale, codice_lotteria)
+        else:
+            # Acconto parziale
+            item_acconto = [{'nome': 'Acconto Lavanderia', 'prezzo': acconto}]
+            stampa_fiscale_vendita(item_acconto, acconto, codice_lotteria)
+
+    # --- LOGICA STAMPA CORTESIA E ETICHETTE ---
+    if not solo_prodotti:
+        if azione == 'stampa':
+            stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx, codice_lotteria)
+            stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
         elif azione == 'whatsapp' or azione == 'email':
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
-            # Qui in futuro si può aggiungere l'invio vero e proprio
             
     return jsonify({"status": "success", "id_ordine": oid})
 
@@ -657,10 +775,11 @@ def ristampa_ordine():
         ordine = cursor.fetchone()
         if not ordine: return jsonify({'status': 'error', 'msg': 'Ordine non trovato'})
         
-        # Recupero Cliente
+        # Recupero Cliente (e CODICE LOTTERIA)
         cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
         cliente = cursor.fetchone()
         cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
+        codice_lotteria = cliente['codice_lotteria'] if cliente and cliente['codice_lotteria'] else ""
         
         # Recupero Capi
         cursor.execute("SELECT id, capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id = ?", (oid,))
@@ -694,7 +813,8 @@ def ristampa_ordine():
                 ordine['data_ritiro'], 
                 pagato, 
                 metodo,
-                is_approx # Passiamo il flag
+                is_approx, # Passiamo il flag
+                codice_lotteria # Passiamo il codice lotteria
             )
             if ok: return jsonify({'status': 'success', 'msg': 'Scontrino inviato alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa scontrino'})
@@ -749,4 +869,5 @@ def storico_cliente(cliente_id):
 
 if __name__ == '__main__': 
     init_db()
+    print("--- AVVIO WASHIFY V.1.1 ---")
     app.run(debug=True, host='0.0.0.0', port=5000)

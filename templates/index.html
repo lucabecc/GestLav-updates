@@ -148,11 +148,12 @@
                     <div class="col-6"><label class="fw-bold text-success small">ACCONTO (€)</label><input type="number" id="input-acconto" class="form-control input-acconto" value="0" min="0" step="0.5" onchange="aggiornaScontrino(false)"></div>
                 </div>
                 <div class="totale-box shadow-sm mt-3">Totale: € <span id="totale">0.00</span></div>
+                
                 <div class="row g-2 mt-3" id="actions-panel">
                     <div class="col-12 mb-2"><button id="btn-sospendi" class="btn btn-warning w-100 fw-bold shadow-sm" onclick="sospendiOrdine()" disabled>🅿️ PAUSA</button></div>
-                    <div class="col-4"><button id="btn-stampa" class="btn btn-success w-100 btn-action shadow" onclick="salvaOrdine('stampa')" disabled>🖨️ STAMPA</button></div>
-                    <div class="col-4"><button id="btn-whatsapp" class="btn btn-success w-100 btn-action shadow" onclick="salvaOrdine('whatsapp')" disabled>📱 WHATSAPP</button></div>
-                    <div class="col-4"><button id="btn-email" class="btn btn-success w-100 btn-action shadow" onclick="salvaOrdine('email')" disabled>📧 EMAIL</button></div>
+                    <div class="col-4"><button id="btn-stampa" class="btn btn-success w-100 btn-sm fw-bold shadow" onclick="salvaOrdine('stampa')" disabled>🖨️ STAMPA</button></div>
+                    <div class="col-4"><button id="btn-whatsapp" class="btn btn-success w-100 btn-sm fw-bold shadow" onclick="salvaOrdine('whatsapp')" disabled>📱 WHATSAPP</button></div>
+                    <div class="col-4"><button id="btn-email" class="btn btn-success w-100 btn-sm fw-bold shadow" onclick="salvaOrdine('email')" disabled>📧 EMAIL</button></div>
                 </div>
             </div>
             <div id="btn-alert-ritiri" class="alert-glass-yellow" onclick="gestisciRitiroRapido()">🔔 CI SONO CAPI DA RITIRARE!<br><span style="font-size: 0.9rem; font-weight: normal;">Clicca qui per visualizzare</span></div>
@@ -509,7 +510,9 @@
 </div>
 
 <div class="modal fade" id="modalNuovoCliente" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-success text-white"><h5 class="modal-title" id="titoloModalCliente">Nuova Anagrafica</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">
-<input type="hidden" id="new-id"> <div class="row g-3"><div class="col-md-6"><label>Nome *</label><input type="text" id="new-nome" class="form-control"></div><div class="col-md-6"><label>Cognome</label><input type="text" id="new-cognome" class="form-control"></div><div class="col-md-6"><label>Telefono</label><input type="text" id="new-tel" class="form-control"></div><div class="col-md-6"><label>Data Nascita</label><input type="date" id="new-nascita" class="form-control"></div><div class="col-12"><label>Indirizzo</label><input type="text" id="new-indirizzo" class="form-control"></div><div class="col-md-8"><label>Città</label><input type="text" id="new-citta" class="form-control"></div><div class="col-md-4"><label>CAP</label><input type="text" id="new-cap" class="form-control"></div></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" onclick="salvaNuovoCliente()">Salva</button></div></div></div></div>
+<input type="hidden" id="new-id"> <div class="row g-3"><div class="col-md-6"><label>Nome *</label><input type="text" id="new-nome" class="form-control"></div><div class="col-md-6"><label>Cognome</label><input type="text" id="new-cognome" class="form-control"></div><div class="col-md-6"><label>Telefono</label><input type="text" id="new-tel" class="form-control"></div><div class="col-md-6"><label>Data Nascita</label><input type="date" id="new-nascita" class="form-control"></div><div class="col-12"><label>Indirizzo</label><input type="text" id="new-indirizzo" class="form-control"></div><div class="col-md-8"><label>Città</label><input type="text" id="new-citta" class="form-control"></div><div class="col-md-4"><label>CAP</label><input type="text" id="new-cap" class="form-control"></div>
+<div class="col-md-6"><label>Codice Lotteria</label><input type="text" id="new-lotteria" class="form-control" style="text-transform:uppercase"></div>
+</div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" onclick="salvaNuovoCliente()">Salva</button></div></div></div></div>
 <div class="modal fade" id="modalSospesi" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header bg-warning"><h5 class="modal-title">Sospesi</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><ul id="lista-sospesi" class="list-group"></ul></div></div></div></div>
 <div class="modal fade" id="modalDettaglioGruppo" tabindex="-1" data-bs-backdrop="static"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title" id="titoloGruppo">Modifica</h5><button type="button" class="btn-close" onclick="chiudiModalDettaglio()"></button></div><div class="modal-body"><div id="lista-dettaglio-gruppo" class="list-group"></div></div><div class="modal-footer"><button type="button" class="btn btn-primary w-100 fw-bold" onclick="chiudiModalDettaglio()">CHIUDI E AGGIORNA</button></div></div></div></div>
 
@@ -685,6 +688,7 @@
         document.getElementById('new-citta').value = "";
         document.getElementById('new-cap').value = "";
         document.getElementById('new-nascita').value = "";
+        document.getElementById('new-lotteria').value = "";
         new bootstrap.Modal(document.getElementById('modalNuovoCliente')).show();
     }
 
@@ -700,6 +704,7 @@
         document.getElementById('new-citta').value = clienteCorrente.citta || "";
         document.getElementById('new-cap').value = clienteCorrente.cap || "";
         document.getElementById('new-nascita').value = clienteCorrente.data_nascita || "";
+        document.getElementById('new-lotteria').value = clienteCorrente.codice_lotteria || "";
         new bootstrap.Modal(document.getElementById('modalNuovoCliente')).show();
     }
 
@@ -713,7 +718,8 @@
             indirizzo: document.getElementById('new-indirizzo').value, 
             citta: document.getElementById('new-citta').value, 
             cap: document.getElementById('new-cap').value, 
-            data_nascita: document.getElementById('new-nascita').value 
+            data_nascita: document.getElementById('new-nascita').value,
+            codice_lotteria: document.getElementById('new-lotteria').value 
         }; 
         
         let url = '/crea_cliente';
