@@ -17,7 +17,8 @@ TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
 # --- CONFIGURAZIONE ---
-SEDE = "FALCONARA"
+# MODIFICA: Nome sede aggiornato
+SEDE = "MARINA" 
 DB_NAME = "lavanderia.db"
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
@@ -57,7 +58,6 @@ def init_db():
     cursor = conn.cursor()
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT, telefono TEXT, indirizzo TEXT, citta TEXT, cap TEXT, data_nascita TEXT, note TEXT)''')
-    # Aggiunto is_approx_date alla creazione tabella ordini se non esiste
     cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT, is_approx_date INTEGER DEFAULT 0)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS dettagli_ordine (id INTEGER PRIMARY KEY AUTOINCREMENT, ordine_id INTEGER, capo TEXT, prezzo REAL, ritirato INTEGER DEFAULT 0, stato_lavorazione INTEGER DEFAULT 0, numero_catena TEXT DEFAULT '')''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
@@ -73,7 +73,6 @@ def init_db():
     try: cursor.execute("SELECT tipo_stoccaggio FROM dettagli_ordine LIMIT 1")
     except: cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN tipo_stoccaggio TEXT DEFAULT 'Nastro'")
     
-    # Migration per data approssimativa
     try: cursor.execute("SELECT is_approx_date FROM ordini LIMIT 1")
     except: cursor.execute("ALTER TABLE ordini ADD COLUMN is_approx_date INTEGER DEFAULT 0")
 
@@ -82,7 +81,7 @@ def init_db():
     defaults = [
         ("printer_star", "Star TSP100 Cutter (TSP143)"), ("port_labels", "COM1"), ("ip_fiscal", "192.168.1.8"), 
         ("fiscal_always", "0"), ("last_reset_date", "2000-01-01 00:00:00"),
-        ("ticket_header", f"LAVANDERIA\n{SEDE}\nVia Roma, 10 - Tel. 071.xxxxx"),
+        ("ticket_header", f"LAVANDERIA WASHIFY\n{SEDE}\nVia Roma, 10 - Tel. 071.xxxxx"),
         ("ticket_footer", "Grazie e Arrivederci!"),
         ("print_logo", "0"), ("label_custom_text", SEDE),
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
@@ -163,10 +162,8 @@ def get_label_font_command(size_name):
 
 # --- STAMPE ---
 def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
-    # Nelle etichette (marcature) stampiamo SEMPRE la data effettiva selezionata, mai "Data Approssimativa".
     porta = get_setting("port_labels")
     listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    # Filtra i capi, ma se stiamo stampando una singola etichetta (items_con_id ha 1 elemento), la stampiamo a prescindere
     is_singola = len(items_con_id) == 1
     capi = [x for x in items_con_id if is_singola or x['nome'] not in listino_vendita]
     
@@ -202,7 +199,6 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
             else: write(f_row1 + BOLD_ON + enc(f"{riga1}\n") + BOLD_OFF)
             write(f_row2 + BOLD_ON + enc(f"{cliente_nome[:15].upper()}\n") + BOLD_OFF)
             
-            # Se è singola, non mettiamo il contatore (1/N) perché potrebbe confondere
             riga_capo = f"{item['nome'][:18]}"
             if not is_singola: riga_capo += f" ({i}/{tot})"
             
@@ -219,7 +215,6 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
     footer_text = get_setting("ticket_footer")
     print_logo = get_setting("print_logo") == "1"
     
-    # MODIFICA: Se è data approssimativa, sovrascriviamo la stringa di stampa, ma manteniamo la data originale nel DB e nelle etichette
     stringa_data_ritiro_stampa = "Data Approssimativa 30 Giorni" if is_approx_date else f"Ritiro dal: {data_ritiro_str}"
     
     S_HEAD = get_star_font(get_setting("font_header") or "wide")
@@ -389,7 +384,16 @@ def get_cliente_rapido():
 def crea_cliente():
     d = request.json; conn = get_db(); cursor = conn.cursor()
     cursor.execute("INSERT INTO clienti (nome, cognome, telefono, indirizzo, citta, cap, data_nascita) VALUES (?, ?, ?, ?, ?, ?, ?)", (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita','')))
-    conn.commit(); new_id = cursor.lastrowid; conn.close(); return jsonify({'status': 'success', 'id': new_id, 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono','')})
+    conn.commit(); new_id = cursor.lastrowid; conn.close(); return jsonify({'status': 'success', 'id': new_id, 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita','')})
+
+# --- NUOVA ROTTA PER MODIFICA CLIENTE ---
+@app.route('/modifica_cliente', methods=['POST'])
+def modifica_cliente():
+    d = request.json; conn = get_db(); cursor = conn.cursor()
+    cursor.execute("UPDATE clienti SET nome=?, cognome=?, telefono=?, indirizzo=?, citta=?, cap=?, data_nascita=? WHERE id=?", 
+                   (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita',''), d.get('id')))
+    conn.commit(); conn.close()
+    return jsonify({'status': 'success', 'id': d.get('id'), 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita','')})
 
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
@@ -440,7 +444,6 @@ def salva_ordine():
     carrello, data_ritiro_raw = d['carrello'], d['data_ritiro']
     sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
     pagato, metodo = d['pagato'], d['metodo']
-    # Recuperiamo il flag per data approssimativa
     is_approx = d.get('is_approx', False)
 
     dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
@@ -457,7 +460,6 @@ def salva_ordine():
     if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
     fiscale_desk_val = 1 if stampa_ora else 0
     
-    # Inseriamo l'ordine includendo il flag is_approx_date
     cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato, is_approx_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione', 1 if is_approx else 0))
     oid = cursor.lastrowid
     stato_lavorazione = 1 if solo_prodotti else 0
@@ -467,9 +469,7 @@ def salva_ordine():
         item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
     conn.commit(); conn.close()
     if not solo_prodotti: 
-        # Passiamo is_approx_date alla funzione stampa_scontrino
         stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx)
-        # stampa_etichette NON usa is_approx_date, usa sempre data_ritiro_str vera
         stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
     return jsonify({"status": "success", "id_ordine": oid})
 

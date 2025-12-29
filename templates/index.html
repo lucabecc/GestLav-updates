@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GestLav 2.0 - {{ sede }}</title>
+    <title>Washify {{ sede }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -63,7 +63,7 @@
 <body>
 
 <div class="container mt-5" id="view-home">
-    <h1 class="text-center mb-4 text-primary fw-bold">GestLav 2.0 - {{ sede }}</h1>
+    <h1 class="text-center mb-4 text-primary fw-bold">Washify {{ sede }}</h1>
     <div class="row g-4 mb-5">
         <div class="col-md-6"><button class="btn btn-ricezione w-100 big-btn" onclick="vaiRicezione()">📥 NUOVO</button></div>
         <div class="col-md-6"><button class="btn btn-consegna w-100 big-btn" onclick="vaiConsegna()">📤 RICONSEGNA</button></div>
@@ -97,7 +97,7 @@
                         </div>
                     </div>
                     <div class="col-md-3"><label class="form-label text-muted small fw-bold">RITIRO</label><input type="text" id="data-ritiro" class="form-control form-control-lg bg-white fw-bold text-center border-primary" readonly></div>
-                    <div class="col-md-4"><button class="btn btn-success w-100 btn-lg shadow-sm" data-bs-toggle="modal" data-bs-target="#modalNuovoCliente">➕ NUOVO CLIENTE</button></div>
+                    <div class="col-md-4"><button id="btn-nuovo-cliente" class="btn btn-success w-100 btn-lg shadow-sm" onclick="apriModalNuovoCliente()">➕ NUOVO CLIENTE</button></div>
                 </div>
             </div>
             <div class="card p-3 shadow-sm border-0" id="pannello-capi" style="opacity: 0.5; pointer-events: none;">
@@ -505,7 +505,8 @@
     </div>
 </div>
 
-<div class="modal fade" id="modalNuovoCliente" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-success text-white"><h5 class="modal-title">Nuova Anagrafica</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-6"><label>Nome *</label><input type="text" id="new-nome" class="form-control"></div><div class="col-md-6"><label>Cognome</label><input type="text" id="new-cognome" class="form-control"></div><div class="col-md-6"><label>Telefono</label><input type="text" id="new-tel" class="form-control"></div><div class="col-md-6"><label>Data Nascita</label><input type="date" id="new-nascita" class="form-control"></div><div class="col-12"><label>Indirizzo</label><input type="text" id="new-indirizzo" class="form-control"></div><div class="col-md-8"><label>Città</label><input type="text" id="new-citta" class="form-control"></div><div class="col-md-4"><label>CAP</label><input type="text" id="new-cap" class="form-control"></div></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" onclick="salvaNuovoCliente()">Salva</button></div></div></div></div>
+<div class="modal fade" id="modalNuovoCliente" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-success text-white"><h5 class="modal-title" id="titoloModalCliente">Nuova Anagrafica</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">
+<input type="hidden" id="new-id"> <div class="row g-3"><div class="col-md-6"><label>Nome *</label><input type="text" id="new-nome" class="form-control"></div><div class="col-md-6"><label>Cognome</label><input type="text" id="new-cognome" class="form-control"></div><div class="col-md-6"><label>Telefono</label><input type="text" id="new-tel" class="form-control"></div><div class="col-md-6"><label>Data Nascita</label><input type="date" id="new-nascita" class="form-control"></div><div class="col-12"><label>Indirizzo</label><input type="text" id="new-indirizzo" class="form-control"></div><div class="col-md-8"><label>Città</label><input type="text" id="new-citta" class="form-control"></div><div class="col-md-4"><label>CAP</label><input type="text" id="new-cap" class="form-control"></div></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" onclick="salvaNuovoCliente()">Salva</button></div></div></div></div>
 <div class="modal fade" id="modalSospesi" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header bg-warning"><h5 class="modal-title">Sospesi</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><ul id="lista-sospesi" class="list-group"></ul></div></div></div></div>
 <div class="modal fade" id="modalDettaglioGruppo" tabindex="-1" data-bs-backdrop="static"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title" id="titoloGruppo">Modifica</h5><button type="button" class="btn-close" onclick="chiudiModalDettaglio()"></button></div><div class="modal-body"><div id="lista-dettaglio-gruppo" class="list-group"></div></div><div class="modal-footer"><button type="button" class="btn btn-primary w-100 fw-bold" onclick="chiudiModalDettaglio()">CHIUDI E AGGIORNA</button></div></div></div></div>
 
@@ -591,14 +592,19 @@
         document.getElementById('cliente-selezionato').style.display = 'flex'; 
         document.getElementById('lista-ricerca').innerHTML = ''; 
         document.getElementById('cerca').value = ''; 
-        // MODIFICA: Tolto il focus per evitare interazioni strane
         document.getElementById('cerca').blur(); 
         document.getElementById('pannello-capi').style.opacity = '1'; 
         document.getElementById('pannello-capi').style.pointerEvents = 'auto'; 
+        
+        // MODIFICA: Cambia tasto Nuovo Cliente in Modifica Cliente
+        const btnNuovo = document.getElementById('btn-nuovo-cliente');
+        btnNuovo.innerText = "✏️ MODIFICA DATI";
+        btnNuovo.className = "btn btn-outline-primary w-100 btn-lg shadow-sm"; // Cambia stile per distinguerlo
+        btnNuovo.setAttribute('onclick', 'apriModificaCliente()');
+
         const res = await fetch(`/cerca_ordini_aperti?cliente_id=${c.id}`);
         const ordini = await res.json();
         const btnAlert = document.getElementById('btn-alert-ritiri');
-        // MODIFICA: Qui ci limitiamo SOLO a mostrare il pulsante. NON apriamo modali.
         if(ordini.length > 0) btnAlert.style.display = 'block'; else btnAlert.style.display = 'none';
     }
 
@@ -617,8 +623,79 @@
     }
     function apriDaLista(id, nome, num) { if(modalSceltaOrdineObj) modalSceltaOrdineObj.hide(); apriDettaglioConsegna(id, nome, num); }
 
-    function resetCliente() { clienteCorrente = null; carrello = []; document.getElementById('qty-input').value = 1; aggiornaScontrino(); document.getElementById('cliente-selezionato').style.display = 'none'; document.getElementById('pannello-capi').style.opacity = '0.5'; document.getElementById('pannello-capi').style.pointerEvents = 'none'; document.getElementById('btn-alert-ritiri').style.display='none'; }
-    async function salvaNuovoCliente() { const d = { nome: document.getElementById('new-nome').value, cognome: document.getElementById('new-cognome').value, telefono: document.getElementById('new-tel').value, indirizzo: document.getElementById('new-indirizzo').value, citta: document.getElementById('new-citta').value, cap: document.getElementById('new-cap').value, data_nascita: document.getElementById('new-nascita').value }; const res = await fetch('/crea_cliente', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)}); const r = await res.json(); if(r.status === 'success') { bootstrap.Modal.getInstance(document.getElementById('modalNuovoCliente')).hide(); r.nome_completo = r.nome; selezionaCliente(r); } else { alert(r.msg); } }
+    function resetCliente() { 
+        clienteCorrente = null; 
+        carrello = []; 
+        document.getElementById('qty-input').value = 1; 
+        aggiornaScontrino(); 
+        document.getElementById('cliente-selezionato').style.display = 'none'; 
+        document.getElementById('pannello-capi').style.opacity = '0.5'; 
+        document.getElementById('pannello-capi').style.pointerEvents = 'none'; 
+        document.getElementById('btn-alert-ritiri').style.display='none'; 
+        
+        // MODIFICA: Ripristina tasto Nuovo Cliente
+        const btnNuovo = document.getElementById('btn-nuovo-cliente');
+        btnNuovo.innerText = "➕ NUOVO CLIENTE";
+        btnNuovo.className = "btn btn-success w-100 btn-lg shadow-sm";
+        btnNuovo.setAttribute('onclick', 'apriModalNuovoCliente()');
+    }
+
+    // MODIFICA: Funzione per aprire il modal in modalità "Nuovo"
+    function apriModalNuovoCliente() {
+        document.getElementById('titoloModalCliente').innerText = "Nuova Anagrafica";
+        document.getElementById('new-id').value = ""; // ID vuoto = Nuovo
+        document.getElementById('new-nome').value = "";
+        document.getElementById('new-cognome').value = "";
+        document.getElementById('new-tel').value = "";
+        document.getElementById('new-indirizzo').value = "";
+        document.getElementById('new-citta').value = "";
+        document.getElementById('new-cap').value = "";
+        document.getElementById('new-nascita').value = "";
+        new bootstrap.Modal(document.getElementById('modalNuovoCliente')).show();
+    }
+
+    // MODIFICA: Funzione per aprire il modal in modalità "Modifica"
+    function apriModificaCliente() {
+        if(!clienteCorrente) return;
+        document.getElementById('titoloModalCliente').innerText = "Modifica Anagrafica";
+        document.getElementById('new-id').value = clienteCorrente.id;
+        document.getElementById('new-nome').value = clienteCorrente.nome;
+        document.getElementById('new-cognome').value = clienteCorrente.cognome || "";
+        document.getElementById('new-tel').value = clienteCorrente.telefono || "";
+        document.getElementById('new-indirizzo').value = clienteCorrente.indirizzo || "";
+        document.getElementById('new-citta').value = clienteCorrente.citta || "";
+        document.getElementById('new-cap').value = clienteCorrente.cap || "";
+        document.getElementById('new-nascita').value = clienteCorrente.data_nascita || "";
+        new bootstrap.Modal(document.getElementById('modalNuovoCliente')).show();
+    }
+
+    async function salvaNuovoCliente() { 
+        const idCliente = document.getElementById('new-id').value;
+        const d = { 
+            id: idCliente,
+            nome: document.getElementById('new-nome').value, 
+            cognome: document.getElementById('new-cognome').value, 
+            telefono: document.getElementById('new-tel').value, 
+            indirizzo: document.getElementById('new-indirizzo').value, 
+            citta: document.getElementById('new-citta').value, 
+            cap: document.getElementById('new-cap').value, 
+            data_nascita: document.getElementById('new-nascita').value 
+        }; 
+        
+        let url = '/crea_cliente';
+        if (idCliente) { url = '/modifica_cliente'; } // Se c'è ID, chiama modifica
+
+        const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)}); 
+        const r = await res.json(); 
+        
+        if(r.status === 'success') { 
+            bootstrap.Modal.getInstance(document.getElementById('modalNuovoCliente')).hide(); 
+            r.nome_completo = r.nome; 
+            selezionaCliente(r); // Ricarica il cliente aggiornato
+        } else { 
+            alert(r.msg); 
+        } 
+    }
 
     function cambiaQty(d) { let el = document.getElementById('qty-input'); let val = parseInt(el.value) || 1; val = Math.max(1, val + d); document.getElementById('qty-input').value = val; }
     function setQty(val) { document.getElementById('qty-input').value = val; }
