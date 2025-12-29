@@ -58,6 +58,7 @@
         .drag-handle { cursor: grab; color: #aaa; margin-right: 10px; }
         .drag-handle:hover { color: #333; }
         .sortable-ghost { opacity: 0.4; background-color: #e2e6ea; }
+        .btn-action { font-weight: bold; padding: 10px; font-size: 1.1rem; }
     </style>
 </head>
 <body>
@@ -147,9 +148,11 @@
                     <div class="col-6"><label class="fw-bold text-success small">ACCONTO (€)</label><input type="number" id="input-acconto" class="form-control input-acconto" value="0" min="0" step="0.5" onchange="aggiornaScontrino(false)"></div>
                 </div>
                 <div class="totale-box shadow-sm mt-3">Totale: € <span id="totale">0.00</span></div>
-                <div class="row g-2 mt-3">
-                    <div class="col-4"><button id="btn-sospendi" class="btn btn-warning w-100 h-100 fw-bold shadow-sm" onclick="sospendiOrdine()" disabled>🅿️ PAUSA</button></div>
-                    <div class="col-8"><button id="btn-salva" class="btn btn-success w-100 h-100 fw-bold shadow" onclick="salvaOrdine()" disabled>✅ CONFERMA</button></div>
+                <div class="row g-2 mt-3" id="actions-panel">
+                    <div class="col-12 mb-2"><button id="btn-sospendi" class="btn btn-warning w-100 fw-bold shadow-sm" onclick="sospendiOrdine()" disabled>🅿️ PAUSA</button></div>
+                    <div class="col-4"><button id="btn-stampa" class="btn btn-success w-100 btn-action shadow" onclick="salvaOrdine('stampa')" disabled>🖨️ STAMPA</button></div>
+                    <div class="col-4"><button id="btn-whatsapp" class="btn btn-success w-100 btn-action shadow" onclick="salvaOrdine('whatsapp')" disabled>📱 WHATSAPP</button></div>
+                    <div class="col-4"><button id="btn-email" class="btn btn-success w-100 btn-action shadow" onclick="salvaOrdine('email')" disabled>📧 EMAIL</button></div>
                 </div>
             </div>
             <div id="btn-alert-ritiri" class="alert-glass-yellow" onclick="gestisciRitiroRapido()">🔔 CI SONO CAPI DA RITIRARE!<br><span style="font-size: 0.9rem; font-weight: normal;">Clicca qui per visualizzare</span></div>
@@ -602,10 +605,37 @@
         btnNuovo.className = "btn btn-outline-primary w-100 btn-lg shadow-sm"; // Cambia stile per distinguerlo
         btnNuovo.setAttribute('onclick', 'apriModificaCliente()');
 
+        // Carica preferenza scontrino
+        if(c.preferenza_scontrino) {
+            evidenziaAzionePreferita(c.preferenza_scontrino);
+        } else {
+            evidenziaAzionePreferita('stampa');
+        }
+
         const res = await fetch(`/cerca_ordini_aperti?cliente_id=${c.id}`);
         const ordini = await res.json();
         const btnAlert = document.getElementById('btn-alert-ritiri');
         if(ordini.length > 0) btnAlert.style.display = 'block'; else btnAlert.style.display = 'none';
+    }
+
+    function evidenziaAzionePreferita(azione) {
+        document.getElementById('btn-stampa').classList.remove('btn-warning');
+        document.getElementById('btn-stampa').classList.add('btn-success');
+        document.getElementById('btn-whatsapp').classList.remove('btn-warning');
+        document.getElementById('btn-whatsapp').classList.add('btn-success');
+        document.getElementById('btn-email').classList.remove('btn-warning');
+        document.getElementById('btn-email').classList.add('btn-success');
+
+        if(azione === 'stampa') {
+            document.getElementById('btn-stampa').classList.remove('btn-success');
+            document.getElementById('btn-stampa').classList.add('btn-warning');
+        } else if (azione === 'whatsapp') {
+            document.getElementById('btn-whatsapp').classList.remove('btn-success');
+            document.getElementById('btn-whatsapp').classList.add('btn-warning');
+        } else if (azione === 'email') {
+            document.getElementById('btn-email').classList.remove('btn-success');
+            document.getElementById('btn-email').classList.add('btn-warning');
+        }
     }
 
     async function gestisciRitiroRapido() {
@@ -638,6 +668,10 @@
         btnNuovo.innerText = "➕ NUOVO CLIENTE";
         btnNuovo.className = "btn btn-success w-100 btn-lg shadow-sm";
         btnNuovo.setAttribute('onclick', 'apriModalNuovoCliente()');
+        
+        // Reset bottoni azione
+        document.querySelectorAll('#actions-panel button').forEach(b => b.disabled = true);
+        document.getElementById('btn-sospendi').disabled = true;
     }
 
     // MODIFICA: Funzione per aprire il modal in modalità "Nuovo"
@@ -691,6 +725,7 @@
         if(r.status === 'success') { 
             bootstrap.Modal.getInstance(document.getElementById('modalNuovoCliente')).hide(); 
             r.nome_completo = r.nome; 
+            r.preferenza_scontrino = 'stampa';
             selezionaCliente(r); // Ricarica il cliente aggiornato
         } else { 
             alert(r.msg); 
@@ -700,7 +735,29 @@
     function cambiaQty(d) { let el = document.getElementById('qty-input'); let val = parseInt(el.value) || 1; val = Math.max(1, val + d); document.getElementById('qty-input').value = val; }
     function setQty(val) { document.getElementById('qty-input').value = val; }
     function aggiungiCapo(nome, prezzo) { let qty = parseInt(document.getElementById('qty-input').value) || 1; for(let i=0; i<qty; i++) { carrello.push({nome: nome, prezzo: prezzo}); } document.getElementById('qty-input').value = 1; aggiornaScontrino(); }
-    function aggiornaScontrino(ridisegna=true) { if(ridisegna){ const div=document.getElementById('lista-carrello'); if(carrello.length===0) div.innerHTML='<p class="text-center mt-5 text-muted">Vuoto</p>'; else { let gruppi={}; carrello.forEach((x,i)=>{ if(!gruppi[x.nome])gruppi[x.nome]={count:0,tot:0}; gruppi[x.nome].count++; gruppi[x.nome].tot+=x.prezzo; }); let html=''; for(let n in gruppi){ let g=gruppi[n]; html+=`<div class="cart-group d-flex justify-content-between align-items-center" onclick="apriDettaglioGruppo('${n}')"><div><span class="badge-qty">${g.count}</span><span class="fw-bold">${n}</span></div><div class="fw-bold">€ ${g.tot.toFixed(2)}</div></div>`; } div.innerHTML=html; }} let tot=0; carrello.forEach(x=>tot+=x.prezzo); let sc=parseFloat(document.getElementById('input-sconto').value)||0; let ac=parseFloat(document.getElementById('input-acconto').value)||0; let daPagare = Math.max(0, tot - sc - ac); document.getElementById('totale').innerText = daPagare.toFixed(2); let h=carrello.length>0; document.getElementById('btn-salva').disabled=!h; document.getElementById('btn-sospendi').disabled=!h; }
+    
+    function aggiornaScontrino(ridisegna=true) { 
+        if(ridisegna){ 
+            const div=document.getElementById('lista-carrello'); 
+            if(carrello.length===0) div.innerHTML='<p class="text-center mt-5 text-muted">Vuoto</p>'; 
+            else { 
+                let gruppi={}; carrello.forEach((x,i)=>{ if(!gruppi[x.nome])gruppi[x.nome]={count:0,tot:0}; gruppi[x.nome].count++; gruppi[x.nome].tot+=x.prezzo; }); 
+                let html=''; for(let n in gruppi){ let g=gruppi[n]; html+=`<div class="cart-group d-flex justify-content-between align-items-center" onclick="apriDettaglioGruppo('${n}')"><div><span class="badge-qty">${g.count}</span><span class="fw-bold">${n}</span></div><div class="fw-bold">€ ${g.tot.toFixed(2)}</div></div>`; } 
+                div.innerHTML=html; 
+            }
+        } 
+        let tot=0; carrello.forEach(x=>tot+=x.prezzo); 
+        let sc=parseFloat(document.getElementById('input-sconto').value)||0; 
+        let ac=parseFloat(document.getElementById('input-acconto').value)||0; 
+        let daPagare = Math.max(0, tot - sc - ac); 
+        document.getElementById('totale').innerText = daPagare.toFixed(2); 
+        
+        let h=carrello.length>0; 
+        document.getElementById('btn-stampa').disabled=!h; 
+        document.getElementById('btn-whatsapp').disabled=!h; 
+        document.getElementById('btn-email').disabled=!h; 
+        document.getElementById('btn-sospendi').disabled=!h; 
+    }
     
     function apriDettaglioGruppo(n) { document.getElementById('titoloGruppo').innerText="Modifica: "+n; const div=document.getElementById('lista-dettaglio-gruppo'); div.innerHTML=''; carrello.forEach((x,i)=>{ if(x.nome===n) div.innerHTML+=`<div class="list-group-item"><div class="input-group"><span class="input-group-text">#${i+1}</span><input type="text" id="mod-nome-${i}" class="form-control fw-bold" value="${x.nome}" onkeydown="if(event.key==='Enter') salvaRiga(${i})"><input type="number" id="mod-prezzo-${i}" class="form-control input-mod-prezzo" value="${x.prezzo.toFixed(2)}" step="0.50" onkeydown="if(event.key==='Enter') salvaRiga(${i})"><button class="btn btn-success" onclick="salvaRiga(${i})"><i class="bi bi-check-lg"></i></button><button class="btn btn-outline-danger" onclick="rimuoviDaGruppo(${i},'${n}')"><i class="bi bi-trash"></i></button></div></div>`; }); if(!modalGruppo)modalGruppo=new bootstrap.Modal(document.getElementById('modalDettaglioGruppo')); modalGruppo.show(); }
     function salvaRiga(i) { carrello[i].nome=document.getElementById(`mod-nome-${i}`).value; carrello[i].prezzo=parseFloat(document.getElementById(`mod-prezzo-${i}`).value); aggiornaScontrino(false); }
@@ -710,9 +767,16 @@
     let metodoScelto='Contanti', isPagato=false;
     function togglePagamento() { isPagato = document.getElementById('check-pagato').checked; document.getElementById('box-metodi').classList.toggle('hidden', !isPagato); }
     function selectMetodo(m) { metodoScelto = m; document.querySelectorAll('.pay-option').forEach(e=>e.classList.remove('pay-selected')); document.getElementById(m==='Contanti'?'opt-contanti':'opt-carta').classList.add('pay-selected'); }
-    async function salvaOrdine() { 
+    
+    async function salvaOrdine(azione) { 
         if(!clienteCorrente) return alert("Manca Cliente!"); 
-        const btn=document.getElementById('btn-salva'); btn.disabled=true; btn.innerText="⏳..."; 
+        
+        // Feedback visivo sul bottone premuto
+        const btn = document.getElementById('btn-' + azione);
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = "⏳...";
+
         // Recuperiamo il valore della checkbox "Data Approssimativa"
         const isApprox = document.getElementById('check-approx').checked;
 
@@ -728,11 +792,14 @@
                 metodo:isPagato?metodoScelto:'', 
                 sconto: parseFloat(document.getElementById('input-sconto').value)||0, 
                 acconto: parseFloat(document.getElementById('input-acconto').value)||0,
-                is_approx: isApprox // Inviamo la scelta al server
+                is_approx: isApprox, // Inviamo la scelta al server
+                azione: azione // stampa, whatsapp, email
             })
         }); 
+        
         location.reload(); 
     }
+
     async function sospendiOrdine() { if(!clienteCorrente) return alert("Manca Cliente!"); await fetch('/sospendi_ordine', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cliente_id:clienteCorrente.id, carrello:carrello, data_ritiro:document.getElementById('data-ritiro').value })}); alert("Ordine PAUSA 🅿️"); resetCliente(); }
     async function apriModalSospesi() { const res = await fetch('/recupera_sospesi'); const data = await res.json(); const ul = document.getElementById('lista-sospesi'); ul.innerHTML = ''; if(data.length === 0) ul.innerHTML = '<li class="list-group-item">Nessun ordine sospeso.</li>'; data.forEach(o => { ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div><strong>${o.nome} ${o.cognome}</strong><br><small>${new Date(o.data_ingresso).toLocaleTimeString()}</small></div><button class="btn btn-primary btn-sm" onclick="caricaSospeso(${o.id})">Recupera</button></li>`; }); new bootstrap.Modal(document.getElementById('modalSospesi')).show(); }
     async function caricaSospeso(id) { const res = await fetch('/carica_sospeso', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})}); const d = await res.json(); selezionaCliente(d.cliente); carrello = d.carrello; aggiornaScontrino(); bootstrap.Modal.getInstance(document.getElementById('modalSospesi')).hide(); }

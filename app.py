@@ -17,7 +17,6 @@ TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
 # --- CONFIGURAZIONE ---
-# MODIFICA: Nome sede aggiornato
 SEDE = "MARINA" 
 DB_NAME = "lavanderia.db"
 
@@ -75,6 +74,10 @@ def init_db():
     
     try: cursor.execute("SELECT is_approx_date FROM ordini LIMIT 1")
     except: cursor.execute("ALTER TABLE ordini ADD COLUMN is_approx_date INTEGER DEFAULT 0")
+
+    # MODIFICA: Aggiunta colonna preferenza_scontrino
+    try: cursor.execute("SELECT preferenza_scontrino FROM clienti LIMIT 1")
+    except: cursor.execute("ALTER TABLE clienti ADD COLUMN preferenza_scontrino TEXT DEFAULT 'stampa'")
 
     conn.commit()
 
@@ -384,7 +387,7 @@ def get_cliente_rapido():
 def crea_cliente():
     d = request.json; conn = get_db(); cursor = conn.cursor()
     cursor.execute("INSERT INTO clienti (nome, cognome, telefono, indirizzo, citta, cap, data_nascita) VALUES (?, ?, ?, ?, ?, ?, ?)", (d.get('nome','').upper(), d.get('cognome','').upper(), d.get('telefono',''), d.get('indirizzo',''), d.get('citta',''), d.get('cap',''), d.get('data_nascita','')))
-    conn.commit(); new_id = cursor.lastrowid; conn.close(); return jsonify({'status': 'success', 'id': new_id, 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita','')})
+    conn.commit(); new_id = cursor.lastrowid; conn.close(); return jsonify({'status': 'success', 'id': new_id, 'nome': f"{d.get('nome','')} {d.get('cognome','')}".strip(), 'telefono': d.get('telefono',''), 'citta': d.get('citta',''), 'indirizzo': d.get('indirizzo',''), 'cognome': d.get('cognome',''), 'cap': d.get('cap',''), 'data_nascita': d.get('data_nascita',''), 'preferenza_scontrino': 'stampa'})
 
 # --- NUOVA ROTTA PER MODIFICA CLIENTE ---
 @app.route('/modifica_cliente', methods=['POST'])
@@ -445,6 +448,9 @@ def salva_ordine():
     sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
     pagato, metodo = d['pagato'], d['metodo']
     is_approx = d.get('is_approx', False)
+    
+    # MODIFICA: Ricezione azione scelta
+    azione = d.get('azione', 'stampa') # stampa, whatsapp, email
 
     dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
     data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
@@ -454,6 +460,10 @@ def salva_ordine():
     else: pagato = False
     if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
     conn = get_db(); cursor = conn.cursor()
+    
+    # MODIFICA: Aggiorna preferenza cliente
+    cursor.execute("UPDATE clienti SET preferenza_scontrino = ? WHERE id = ?", (azione, d['cliente_id']))
+    
     last_reset = get_setting("last_reset_date")
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
     stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
@@ -468,9 +478,19 @@ def salva_ordine():
         cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione) VALUES (?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione))
         item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
     conn.commit(); conn.close()
-    if not solo_prodotti: 
-        stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx)
-        stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+    
+    # MODIFICA: Logica di stampa condizionale
+    if not solo_prodotti:
+        # Se è STAMPA, stampa sia scontrino che etichette
+        if azione == 'stampa':
+            stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx)
+            stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+        
+        # Se è WHATSAPP o EMAIL, stampa SOLO le etichette, NON lo scontrino
+        elif azione == 'whatsapp' or azione == 'email':
+            stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+            # Qui in futuro si può aggiungere l'invio vero e proprio
+            
     return jsonify({"status": "success", "id_ordine": oid})
 
 @app.route('/sospendi_ordine', methods=['POST'])
