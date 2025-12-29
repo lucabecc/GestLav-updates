@@ -9,6 +9,7 @@ import time
 import urllib.request
 import urllib.error
 import shutil
+import struct
 
 # --- CONFIGURAZIONE PERCORSI ASSOLUTI ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +18,7 @@ TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
 # --- CONFIGURAZIONE ---
-SEDE = "MARINA" 
+SEDE = "MARINA"
 DB_NAME = "lavanderia.db"
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
@@ -92,7 +93,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                 
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                   
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -136,83 +137,159 @@ def get_listino_dict():
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
-# --- GESTIONE STAMPANTE FISCALE ---
+# --- GESTIONE STAMPANTE FISCALE (CUSTOM KUBE II - PROTOCOLLO STABILIZZATO) ---
 
-def esegui_chiusura_fiscale():
-    ip = get_setting("ip_fiscal")
-    print(f"Tentativo chiusura fiscale su IP: {ip}")
+def flush_socket(s):
+    """Svuota il buffer di ricezione completamente"""
+    s.settimeout(0.1)
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10)
-        s.connect((ip, 9100))
-        s.send(b"\x18") # Clear
-        time.sleep(1)
-        s.send(b"1F\r\n") # Comando Chiusura (Tipico Custom/Epson)
-        time.sleep(2)
-        s.close()
-        return True, "Chiusura Inviata!"
-    except Exception as e: return False, f"Errore: {str(e)}"
+        while True:
+            data = s.recv(4096)
+            if not data: break
+            print(f"   [FLUSH] Scartati {len(data)} bytes di spazzatura.")
+    except socket.timeout:
+        pass
+    except Exception as e:
+        print(f"   [FLUSH ERROR] {e}")
 
 def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
     """
-    Funzione POTENZIATA per risolvere il problema dei dati vecchi.
-    Pulisce il buffer e usa connessioni robuste.
+    Funzione SPECIFICA PER CUSTOM KUBEIIx-F - FIX GHOST DATA
+    Se la stampante stampa roba vecchia, è perché il buffer non era vuoto.
+    Questa versione esegue una pulizia aggressiva pre-stampa.
     """
     ip = get_setting("ip_fiscal")
     if not ip:
         print("IP Fiscale non configurato.")
         return False
         
-    print(f"--- AVVIO STAMPA FISCALE SU {ip} ---")
-    print(f"DATI DA STAMPARE: {items}") # Log per debug: controlla qui se i dati sono giusti
+    print(f"--- AVVIO STAMPA FISCALE CUSTOM SU {ip} (AGGRESSIVE CLEAN MODE) ---")
     
+    s = None
     try:
+        # 1. Configurazione Socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) # Disabilita Nagle
-        s.settimeout(10) # Timeout più lungo
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) # No delay
+        
+        # Abortive Close per evitare socket appesi
+        l_onoff = 1
+        l_linger = 0
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', l_onoff, l_linger))
+        
+        s.settimeout(5) 
+        
+        print("1. Connessione...")
         s.connect((ip, 9100))
         
-        # 1. Pulizia Buffer in entrata (se c'è roba vecchia dalla stampante)
-        try:
-            s.settimeout(0.1)
-            s.recv(1024)
-        except:
-            pass
-        s.settimeout(10)
-
-        # 2. Comando Cancellazione preventivo (Pulisce transazioni appese)
-        s.sendall(b"\x18") 
-        time.sleep(0.5)
+        # --- FASE CRITICA: PULIZIA BUFFER (FIX PER SCONTRINI VECCHI) ---
+        print("2. Pulizia Buffer (Reset Stato)...")
         
-        # 3. Invio Articoli
-        # Formato tipico: "Descrizione" Prezzo Reparto *
+        # Invio CANCEL (0x18) più volte per essere sicuri
+        s.sendall(b"\x18") 
+        time.sleep(0.2)
+        
+        # Invio A CAPO per chiudere eventuali comandi appesi dall'altro gestionale
+        s.sendall(b"\r\n")
+        time.sleep(0.2)
+
+        # Secondo CANCEL di sicurezza
+        s.sendall(b"\x18")
+        time.sleep(0.5) # Pausa importante per far elaborare il reset
+        
+        # Svuota tutto quello che la stampante ci manda indietro (errori vecchi)
+        flush_socket(s)
+        # -------------------------------------------------------------
+
+        # 3. Check Status (Opzionale ma utile)
+        print("3. Check Status...")
+        s.sendall(b'\x10\x04\x01') # DLE EOT 1
+        try:
+            s.settimeout(1.0)
+            status = s.recv(1)
+            print(f"   Status byte: {status}")
+        except socket.timeout:
+            print("   WARNING: Nessuna risposta allo status. Procedo.")
+
+        # 4. Invio Dati con PACING
+        print("4. Invio Righe Scontrino...")
+        
         for item in items:
-            # Pulizia caratteri descrizione per evitare errori protocollo
             nome_pulito = ''.join(e for e in item['nome'] if e.isalnum() or e in ' .-*')
             desc = nome_pulito[:20] 
             prezzo = f"{item['prezzo']:.2f}"
             
-            # Comando vendita (Protocollo Standard Xon/Xoff)
-            cmd = f'"{desc}" {prezzo} 1 *r\n' 
+            # Comando Custom: "Descrizione" Prezzo Reparto *r
+            cmd = f'"{desc}" {prezzo} 1 *r\r\n' 
+            print(f"   -> {cmd.strip()}")
             s.sendall(cmd.encode())
-            time.sleep(0.1) # Breve pausa per non intasare il buffer della stampante
+            
+            # Pausa tra le righe per non saturare il buffer
+            time.sleep(0.05) 
 
-        # 4. Codice Lotteria
+        # Codice Lotteria
         if codice_lotteria:
+            print(f"   Invio Lotteria: {codice_lotteria}")
             cmd_lotteria = f"C{codice_lotteria.upper()}\r\n"
             s.sendall(cmd_lotteria.encode())
-            time.sleep(0.2)
+            time.sleep(0.05)
         
-        # 5. Chiusura / Totale
+        # 5. Chiusura Scontrino
+        print("5. Invio Totale (1T)...")
         s.sendall(b"1T\r\n")
         
-        time.sleep(0.5) # Aspetta che la stampante elabori
+        # 6. Barriera di Sincronizzazione (ENQ)
+        print("6. Attesa Conferma Stampa...")
+        time.sleep(0.5) # Tempo tecnico di stampa
+        flush_socket(s)
+        s.sendall(b"\x05") # ENQ (Richiesta stato fine carta/fine job)
+        
+        try:
+            s.settimeout(5.0)
+            resp = s.recv(1024)
+            print(f"   [SYNC OK] Risposta finale: {resp}")
+        except socket.timeout:
+            print("   [SYNC TIMEOUT] La stampante ha stampato ma non ha risposto. Chiudo.")
+        
+        # 7. Chiusura Socket
+        print("7. Chiusura Socket.")
+        try:
+            s.shutdown(socket.SHUT_RDWR)
+        except: pass
         s.close()
-        print("--- STAMPA FISCALE INVIATA CORRETTAMENTE ---")
+        
+        print("--- STAMPA COMPLETATA ---")
         return True
+        
     except Exception as e:
         print(f"ERRORE CRITICO STAMPA FISCALE: {e}")
+        if s: s.close()
         return False
+
+def esegui_chiusura_fiscale():
+    ip = get_setting("ip_fiscal")
+    print(f"Tentativo chiusura fiscale su IP: {ip}")
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect((ip, 9100))
+        
+        # Pulizia preventiva anche qui
+        s.sendall(b"\x18")
+        time.sleep(0.5)
+        flush_socket(s)
+        
+        s.sendall(b"1F\r\n") # Comando Chiusura (Z)
+        
+        # Sync
+        time.sleep(2) # La chiusura ci mette di più
+        s.sendall(b"\x05")
+        try:
+            s.recv(1024)
+        except: pass
+
+        s.close()
+        return True, "Chiusura Inviata!"
+    except Exception as e: return False, f"Errore: {str(e)}"
 
 # --- FONTS ---
 def get_star_font(size_name):
@@ -869,5 +946,5 @@ def storico_cliente(cliente_id):
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.1 ---")
+    print("--- AVVIO WASHIFY V.1.1 (Protocollo Stampante Fixato) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
