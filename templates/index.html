@@ -814,7 +814,32 @@
     let ordineProntiId = null;
     async function cercaPerScontrino() { const val = document.getElementById('input-pronti-scontrino').value; if(val) eseguiRicercaPronti('ordine', val); }
     async function cercaPerCapo() { const val = document.getElementById('input-pronti-capo').value; if(val) eseguiRicercaPronti('capo', val); }
-    async function eseguiRicercaPronti(tipo, valore) { const res = await fetch('/get_items_scontrino', {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tipo: tipo, valore: valore})}); const d = await res.json(); if(d.status === 'error') { alert(d.msg); return; } ordineProntiId = d.ordine_id; const ul = document.getElementById('lista-pronti'); if(document.getElementById('input-pronti-scontrino').getAttribute('data-last-ord') != ordineProntiId) { ul.innerHTML = ''; } document.getElementById('input-pronti-scontrino').setAttribute('data-last-ord', ordineProntiId); if(ul.children.length === 0) { d.items.forEach(i => { ul.innerHTML += `<li class="list-group-item"><input class="form-check-input me-2 chk-pronto" type="checkbox" value="${i.id}"> ${i.capo} <small class="text-muted">[Cod: ${i.id}]</small></li>`; }); } d.items.forEach(i => { let checkbox = ul.querySelector(`input[value="${i.id}"]`); if(checkbox && (tipo === 'ordine' || (tipo === 'capo' && i.id === d.target_item_id))) checkbox.checked = true; }); document.getElementById('box-lista-pronti').style.display='block'; document.getElementById('input-catena').focus(); if(tipo === 'capo') document.getElementById('input-pronti-capo').value = ''; if(tipo === 'ordine') document.getElementById('input-pronti-scontrino').value = ''; }
+    async function eseguiRicercaPronti(tipo, valore) { 
+        const res = await fetch('/get_items_scontrino', {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tipo: tipo, valore: valore})}); 
+        const d = await res.json(); 
+        if(d.status === 'error') { alert(d.msg); return; } 
+        ordineProntiId = d.ordine_id; 
+        const ul = document.getElementById('lista-pronti'); 
+        
+        // MODIFICA PER TE: Se cerco un CAPO (es 85), pulisco SEMPRE la lista, anche se l'ordine è lo stesso.
+        // Così vedo solo il risultato attuale (es 84).
+        if(tipo === 'capo' || document.getElementById('input-pronti-scontrino').getAttribute('data-last-ord') != ordineProntiId) { 
+            ul.innerHTML = ''; 
+        } 
+        
+        document.getElementById('input-pronti-scontrino').setAttribute('data-last-ord', ordineProntiId); 
+        if(ul.children.length === 0) { 
+            d.items.forEach(i => { ul.innerHTML += `<li class="list-group-item"><input class="form-check-input me-2 chk-pronto" type="checkbox" value="${i.id}"> ${i.capo} <small class="text-muted">[Cod: ${i.id}]</small></li>`; }); 
+        } 
+        d.items.forEach(i => { 
+            let checkbox = ul.querySelector(`input[value="${i.id}"]`); 
+            if(checkbox && (tipo === 'ordine' || (tipo === 'capo' && i.id === d.target_item_id))) checkbox.checked = true; 
+        }); 
+        document.getElementById('box-lista-pronti').style.display='block'; 
+        document.getElementById('input-catena').focus(); 
+        if(tipo === 'capo') document.getElementById('input-pronti-capo').value = ''; 
+        if(tipo === 'ordine') document.getElementById('input-pronti-scontrino').value = ''; 
+    }
     async function confermaPronti() { let ids = []; document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); const catena = document.getElementById('input-catena').value; const res = await fetch('/conferma_pronti', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})}); const data = await res.json(); if(data.status === 'error') { alert(data.msg); } else { alert("Stati aggiornati!"); vaiHome(); } }
 
     // --- RICONSEGNA E RISTAMPA ---

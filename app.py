@@ -63,7 +63,6 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
-    # --- MIGRATION ---
     try: cursor.execute("SELECT ordine FROM listino LIMIT 1")
     except: cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0"); cursor.execute("UPDATE listino SET ordine = id")
         
@@ -93,7 +92,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                   
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                  
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -137,156 +136,103 @@ def get_listino_dict():
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
-# --- GESTIONE STAMPANTE FISCALE (CUSTOM KUBE II - PROTOCOLLO STABILIZZATO) ---
+# --- GESTIONE STAMPANTE FISCALE (FIX 0 EURO - VERSIONE ROBUSTA) ---
 
-def flush_socket(s):
-    """Svuota il buffer di ricezione completamente"""
-    s.settimeout(0.1)
+def flush_socket_aggressive(s):
+    """Svuota il buffer in lettura"""
+    s.settimeout(0.2) 
     try:
         while True:
             data = s.recv(4096)
             if not data: break
-            print(f"   [FLUSH] Scartati {len(data)} bytes di spazzatura.")
     except socket.timeout:
-        pass
+        pass 
     except Exception as e:
         print(f"   [FLUSH ERROR] {e}")
 
 def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
     """
-    Funzione SPECIFICA PER CUSTOM KUBEIIx-F - FIX GHOST DATA
-    Se la stampante stampa roba vecchia, è perché il buffer non era vuoto.
-    Questa versione esegue una pulizia aggressiva pre-stampa.
+    Funzione: STAMPA FISCALE
     """
+    
     ip = get_setting("ip_fiscal")
     if not ip:
         print("IP Fiscale non configurato.")
         return False
         
-    print(f"--- AVVIO STAMPA FISCALE CUSTOM SU {ip} (AGGRESSIVE CLEAN MODE) ---")
+    print(f"--- AVVIO STAMPA FISCALE SU {ip} ---")
     
     s = None
     try:
-        # 1. Configurazione Socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) # No delay
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.settimeout(5)
         
-        # Abortive Close per evitare socket appesi
-        l_onoff = 1
-        l_linger = 0
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', l_onoff, l_linger))
-        
-        s.settimeout(5) 
-        
-        print("1. Connessione...")
+        print("1. Connessione alla stampante...")
         s.connect((ip, 9100))
         
-        # --- FASE CRITICA: PULIZIA BUFFER (FIX PER SCONTRINI VECCHI) ---
-        print("2. Pulizia Buffer (Reset Stato)...")
-        
-        # Invio CANCEL (0x18) più volte per essere sicuri
-        s.sendall(b"\x18") 
-        time.sleep(0.2)
-        
-        # Invio A CAPO per chiudere eventuali comandi appesi dall'altro gestionale
-        s.sendall(b"\r\n")
-        time.sleep(0.2)
+        # Reset iniziale (pulisce il buffer)
+        s.sendall(b'\x1b\x40') 
+        time.sleep(0.5)
 
-        # Secondo CANCEL di sicurezza
-        s.sendall(b"\x18")
-        time.sleep(0.5) # Pausa importante per far elaborare il reset
-        
-        # Svuota tutto quello che la stampante ci manda indietro (errori vecchi)
-        flush_socket(s)
-        # -------------------------------------------------------------
-
-        # 3. Check Status (Opzionale ma utile)
-        print("3. Check Status...")
-        s.sendall(b'\x10\x04\x01') # DLE EOT 1
-        try:
-            s.settimeout(1.0)
-            status = s.recv(1)
-            print(f"   Status byte: {status}")
-        except socket.timeout:
-            print("   WARNING: Nessuna risposta allo status. Procedo.")
-
-        # 4. Invio Dati con PACING
-        print("4. Invio Righe Scontrino...")
-        
         for item in items:
-            nome_pulito = ''.join(e for e in item['nome'] if e.isalnum() or e in ' .-*')
-            desc = nome_pulito[:20] 
-            prezzo = f"{item['prezzo']:.2f}"
+            # 1. PULIZIA DESCRIZIONE
+            nome_raw = str(item['nome']).replace('"', '').replace("'", "")
+            desc = nome_raw[:20]
             
-            # Comando Custom: "Descrizione" Prezzo Reparto *r
-            cmd = f'"{desc}" {prezzo} 1 *r\r\n' 
-            print(f"   -> {cmd.strip()}")
-            s.sendall(cmd.encode())
+            # 2. FORMATTAZIONE PREZZO
+            try:
+                valore = float(item['prezzo'])
+            except:
+                valore = 0.0
             
-            # Pausa tra le righe per non saturare il buffer
-            time.sleep(0.05) 
+            # Trasforma 10.5 in "10,50" (virgola per le stampanti italiane)
+            prezzo_str = f"{valore:.2f}".replace('.', ',')
+            
+            # 3. COMANDO UNICO
+            comando = f'"{desc}"1*{prezzo_str}1R\r\n'
+            
+            print(f"   -> Riga inviata: {comando.strip()}")
+            s.sendall(comando.encode('cp858', errors='ignore'))
+            time.sleep(0.1)
 
-        # Codice Lotteria
+        # Invio Codice Lotteria (se c'è)
         if codice_lotteria:
-            print(f"   Invio Lotteria: {codice_lotteria}")
             cmd_lotteria = f"C{codice_lotteria.upper()}\r\n"
-            s.sendall(cmd_lotteria.encode())
-            time.sleep(0.05)
+            s.sendall(cmd_lotteria.encode('cp858'))
+            time.sleep(0.2)
         
-        # 5. Chiusura Scontrino
-        print("5. Invio Totale (1T)...")
+        # Chiusura Scontrino (1T = Totale)
+        print("3. Chiusura scontrino (1T)...")
         s.sendall(b"1T\r\n")
         
-        # 6. Barriera di Sincronizzazione (ENQ)
-        print("6. Attesa Conferma Stampa...")
-        time.sleep(0.5) # Tempo tecnico di stampa
-        flush_socket(s)
-        s.sendall(b"\x05") # ENQ (Richiesta stato fine carta/fine job)
+        time.sleep(1.5)
         
-        try:
-            s.settimeout(5.0)
-            resp = s.recv(1024)
-            print(f"   [SYNC OK] Risposta finale: {resp}")
-        except socket.timeout:
-            print("   [SYNC TIMEOUT] La stampante ha stampato ma non ha risposto. Chiudo.")
-        
-        # 7. Chiusura Socket
-        print("7. Chiusura Socket.")
+        # Chiusura connessione pulita
         try:
             s.shutdown(socket.SHUT_RDWR)
-        except: pass
+        except:
+            pass
         s.close()
         
         print("--- STAMPA COMPLETATA ---")
         return True
         
     except Exception as e:
-        print(f"ERRORE CRITICO STAMPA FISCALE: {e}")
+        print(f"ERRORE CRITICO STAMPA: {e}")
         if s: s.close()
         return False
 
 def esegui_chiusura_fiscale():
     ip = get_setting("ip_fiscal")
-    print(f"Tentativo chiusura fiscale su IP: {ip}")
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5)
         s.connect((ip, 9100))
-        
-        # Pulizia preventiva anche qui
-        s.sendall(b"\x18")
-        time.sleep(0.5)
-        flush_socket(s)
-        
-        s.sendall(b"1F\r\n") # Comando Chiusura (Z)
-        
-        # Sync
-        time.sleep(2) # La chiusura ci mette di più
-        s.sendall(b"\x05")
-        try:
-            s.recv(1024)
-        except: pass
-
+        s.sendall(b'\x1b\x40')
+        time.sleep(1)
+        s.sendall(b"1F\r\n")
+        time.sleep(2)
         s.close()
         return True, "Chiusura Inviata!"
     except Exception as e: return False, f"Errore: {str(e)}"
@@ -400,14 +346,30 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
             buffer += S_NORM + b"-" * 42 + b"\n"
             if sconto > 0: buffer += enc(f"SCONTO APPLICATO: -{sconto:.2f}") + EURO + b"\n"
             buffer += ALIGN_CENTER + S_WIDE + enc(f"N. Capi: {num_capi_tot}\n")
-            buffer += S_TOT + BOLD_ON + enc(f"TOT: {totale:.2f}") + EURO + b"\n" + BOLD_OFF + S_WIDE + b"DA PAGARE\n" + S_NORM + ALIGN_LEFT
-            if acconto > 0:
-                residuo = max(0, totale - acconto)
-                buffer += enc(f"ACCONTO: {acconto:.2f}") + EURO + enc(f" ({metodo})\n")
-                if residuo > 0: buffer += ALIGN_CENTER + S_WIDE + enc(f"DA SALDARE: {residuo:.2f}") + EURO + b"\n" + S_NORM + ALIGN_LEFT
-                else: buffer += ALIGN_CENTER + S_WIDE + b"SALDATO\n" + S_NORM + ALIGN_LEFT
+            
+            # --- MODIFICA RICHIESTA: Se pagato, NON stampare "DA PAGARE" ---
+            buffer += S_TOT + BOLD_ON + enc(f"TOT: {totale:.2f}") + EURO + b"\n" + BOLD_OFF
+            
+            residuo = max(0, totale - acconto)
+            
+            # Logica: Se c'è ancora debito e NON è segnato come pagato, scrivo "DA PAGARE"
+            if residuo > 0.01 and not pagato:
+                buffer += S_WIDE + b"DA PAGARE\n" + S_NORM + ALIGN_LEFT
             else:
-                if pagato: buffer += ALIGN_CENTER + S_WIDE + enc(f"PAGATO ({metodo})\n") + S_NORM + ALIGN_LEFT
+                 # Se è tutto pagato, non scrivo nulla qui, scriverò "PAGATO" sotto
+                buffer += S_NORM + ALIGN_LEFT
+            
+            # --- LOGICA SALDO / PAGATO ---
+            if acconto > 0:
+                if residuo > 0.01 and not pagato: 
+                    buffer += ALIGN_CENTER + S_WIDE + enc(f"DA SALDARE: {residuo:.2f}") + EURO + b"\n" + S_NORM + ALIGN_LEFT
+                else: 
+                    buffer += ALIGN_CENTER + S_WIDE + b"PAGATO\n" + S_NORM + ALIGN_LEFT
+            else:
+                if pagato: 
+                    buffer += ALIGN_CENTER + S_WIDE + b"PAGATO\n" + S_NORM + ALIGN_LEFT
+                else:
+                    pass
             
             buffer += b"\n" + ALIGN_CENTER + S_NORM + BOLD_ON + enc(f"{stringa_data_ritiro_stampa}\n") + BOLD_OFF
             buffer += ALIGN_CENTER + S_FOOT
@@ -569,7 +531,16 @@ def cerca_ordini_aperti():
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
     cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk, pagato FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone()
-    info = {'totale_ordine': res[0], 'totale_versato': res[1], 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': res[4]}
+    # Se è pagato ma l'acconto era minore del totale (bug vecchio), forziamo visivamente per il frontend
+    totale = res[0]
+    pagato = res[4]
+    acconto = res[1]
+    if pagato == 1:
+        totale_versato = totale # Se è pagato, consideriamo versato tutto
+    else:
+        totale_versato = acconto
+
+    info = {'totale_ordine': totale, 'totale_versato': totale_versato, 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': pagato}
     cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
 
@@ -628,7 +599,8 @@ def salva_ordine():
     carrello = d['carrello']
     data_ritiro_raw = d['data_ritiro']
     sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
-    pagato, metodo = d['pagato'], d['metodo']
+    pagato_bool = d['pagato'] # Boolean dal frontend
+    metodo = d['metodo']
     is_approx = d.get('is_approx', False)
     
     azione = d.get('azione', 'stampa') 
@@ -637,9 +609,22 @@ def salva_ordine():
     data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
     totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
     solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
-    if acconto >= totale: pagato = True
-    else: pagato = False
-    if solo_prodotti: pagato = True; metodo = metodo or "Contanti"
+    
+    # --- FIX RICONSEGNA DA PAGARE ---
+    # Se l'utente ha spuntato "Pagamento Anticipato", forziamo l'acconto a coprire tutto il totale.
+    # Così nel database acconto == totale e il residuo sarà 0.
+    if pagato_bool:
+        acconto = totale
+        pagato = True
+    else:
+        # Se non è spuntato, controlliamo se l'acconto manuale copre tutto
+        if acconto >= totale: 
+            pagato = True
+        else: 
+            pagato = False
+
+    if solo_prodotti: pagato = True; metodo = metodo or "Contanti"; acconto = totale
+    
     conn = get_db(); cursor = conn.cursor()
     
     cursor.execute("UPDATE clienti SET preferenza_scontrino = ? WHERE id = ?", (azione, d['cliente_id']))
@@ -650,10 +635,17 @@ def salva_ordine():
 
     last_reset = get_setting("last_reset_date")
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
-    stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
     
-    # Se il cliente paga tutto subito (o prodotti vendita), stampiamo fiscale ora
-    if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
+    stampa_ora = False
+    contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello)
+    fiscal_always = get_setting("fiscal_always") == "1"
+    
+    # --- LOGICA FIX STAMPA FISCALE ---
+    # Se pagato con carta, DEVE stampare fiscale subito
+    if (pagato and metodo == 'Carta'): 
+        stampa_ora = True
+    elif contiene_prodotti or fiscal_always: 
+        stampa_ora = True
     
     fiscale_desk_val = 1 if stampa_ora else 0
     
@@ -668,7 +660,6 @@ def salva_ordine():
     
     # --- LOGICA STAMPA SCONTRINO FISCALE ---
     if stampa_ora:
-        # Debug: stampiamo cosa stiamo per inviare alla funzione fiscale
         print(f"DEBUG SALVA ORDINE: Invio fiscale di {len(carrello)} elementi.")
         
         if pagato:
@@ -681,6 +672,7 @@ def salva_ordine():
     # --- LOGICA STAMPA CORTESIA E ETICHETTE ---
     if not solo_prodotti:
         if azione == 'stampa':
+            # Passiamo i valori aggiornati (acconto = totale se pagato) alla stampa cortesia
             stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx, codice_lotteria)
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
         elif azione == 'whatsapp' or azione == 'email':
@@ -721,8 +713,16 @@ def get_items_scontrino():
     elif tipo == 'capo':
         cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ? AND ritirato = 0", (valore,)); res = cursor.fetchone()
         if res: order_id = res[0]; target_item_id = int(valore)
+    
     if not order_id: conn.close(); return jsonify({'status': 'error', 'msg': 'Nessun risultato trovato.'})
-    cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (order_id,)); capi = [dict(row) for row in cursor.fetchall()]; conn.close()
+    
+    # --- MODIFICA RICHIESTA: Se cerco per CAPO, restituisco SOLO quel capo ---
+    if tipo == 'capo' and target_item_id:
+        cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE id = ?", (target_item_id,))
+    else:
+        cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (order_id,))
+        
+    capi = [dict(row) for row in cursor.fetchall()]; conn.close()
     return jsonify({'status': 'success', 'items': capi, 'ordine_id': order_id, 'target_item_id': target_item_id})
 
 @app.route('/conferma_pronti', methods=['POST'])
@@ -735,7 +735,8 @@ def conferma_pronti():
             conflict = cursor.fetchone()
             if conflict: conn.close(); return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena} ({t}) OCCUPATA dall'ordine #{conflict[0]}!"})
     if ids:
-        pl = ','.join(['?']*len(ids)); cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ? AND id NOT IN ({pl})", [oid] + ids)
+        pl = ','.join(['?']*len(ids)); 
+        # cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ? AND id NOT IN ({pl})", [oid] + ids) # COMMENTATO PERCHÈ ORA SE CERCHI SINGOLO CAPO NON DEVI RESETTARE GLI ALTRI
         cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena] + ids)
     else: cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
@@ -946,5 +947,5 @@ def storico_cliente(cliente_id):
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.1 (Protocollo Stampante Fixato) ---")
+    print("--- AVVIO WASHIFY V.1.3 (Scontrino Fix e Pronti Singoli) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
