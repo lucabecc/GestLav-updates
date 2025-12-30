@@ -12,6 +12,7 @@ import urllib.parse
 import shutil
 import struct
 import json
+from collections import defaultdict
 
 # --- CONFIGURAZIONE PERCORSI ASSOLUTI ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -98,7 +99,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                    
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                     
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -936,29 +937,53 @@ def storico_cliente(cliente_id):
         storico[oid]['capi'].append({'capo': r['capo'], 'prezzo': r['prezzo']})
     return jsonify(list(storico.values()))
 
-# --- NUOVA API STATISTICHE ---
+# --- NUOVA API STATISTICHE AGGIORNATA ---
 @app.route('/api/get_stats')
 def api_get_stats():
+    # FILTRO DATE
     start_date = request.args.get('start', '2000-01-01')
-    end_date = request.args.get('end', '2100-01-01')
+    end_date_raw = request.args.get('end', '2100-01-01')
     
     conn = get_db(); cursor = conn.cursor()
     
-    # Statistiche Giornaliere (Capi + Incasso)
-    # Nota: SQLite non ha DATE(), si usa substr o strftime. Qui usiamo date() che funziona nelle versioni recenti.
-    sql_trend = """
+    # 1. Raccolta Dati Giornalieri per il Grafico Multiline
+    daily_stats = defaultdict(lambda: {'items': 0, 'revenue': 0.0, 'fiscal': 0})
+
+    # 1.a Capi Entrati per Giorno
+    cursor.execute("""
         SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi 
         FROM ordini o 
         JOIN dettagli_ordine d ON o.id = d.ordine_id 
         WHERE date(o.data_ingresso) BETWEEN ? AND ?
-        GROUP BY date(o.data_ingresso) 
-        ORDER BY date(o.data_ingresso) ASC
-    """
-    cursor.execute(sql_trend, (start_date, end_date))
-    trend_data = [dict(row) for row in cursor.fetchall()]
-    
-    # Top 10 Capi
-    sql_top_items = """
+        GROUP BY date(o.data_ingresso)
+    """, (start_date, end_date_raw))
+    for r in cursor.fetchall():
+        daily_stats[r['data']]['items'] = r['tot_capi']
+
+    # 1.b Incassi (Totale Ordini) per Giorno e Scontrini Fiscali Emessi
+    cursor.execute("""
+        SELECT date(data_ingresso) as data, SUM(totale) as tot_incasso, SUM(CASE WHEN fiscale_emesso = 1 THEN 1 ELSE 0 END) as tot_fiscali
+        FROM ordini
+        WHERE date(data_ingresso) BETWEEN ? AND ?
+        GROUP BY date(data_ingresso)
+    """, (start_date, end_date_raw))
+    for r in cursor.fetchall():
+        daily_stats[r['data']]['revenue'] = r['tot_incasso'] if r['tot_incasso'] else 0.0
+        daily_stats[r['data']]['fiscal'] = r['tot_fiscali'] if r['tot_fiscali'] else 0
+
+    # Convertiamo in lista ordinata per il frontend
+    trend_daily = []
+    sorted_dates = sorted(daily_stats.keys())
+    for d in sorted_dates:
+        trend_daily.append({
+            'data': d,
+            'items': daily_stats[d]['items'],
+            'revenue': daily_stats[d]['revenue'],
+            'fiscal': daily_stats[d]['fiscal']
+        })
+
+    # 2. Top Items (Capi più portati nel periodo)
+    cursor.execute("""
         SELECT d.capo, count(d.id) as qty 
         FROM dettagli_ordine d 
         JOIN ordini o ON d.ordine_id = o.id
@@ -966,15 +991,118 @@ def api_get_stats():
         GROUP BY d.capo 
         ORDER BY qty DESC 
         LIMIT 10
-    """
-    cursor.execute(sql_top_items, (start_date, end_date))
+    """, (start_date, end_date_raw))
     top_items = [dict(row) for row in cursor.fetchall()]
     
-    conn.close()
-    return jsonify({'trend': trend_data, 'top_items': top_items})
+    # 3. Aggregati Generali (per i box di testo)
+    
+    # 3a. Conteggio Scontrini Fiscali
+    cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
+    fiscal_count = cursor.fetchone()[0]
 
+    # 3b. Totale Valore Scontrini Fiscali (RICHIESTO)
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
+    fiscal_value = cursor.fetchone()[0] or 0.0
+
+    # 3c. Totale Incasso Globale
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
+    total_revenue = cursor.fetchone()[0] or 0.0
+
+    # 3d. Totale Capi Entrati nel Periodo
+    cursor.execute("""
+        SELECT COUNT(d.id) 
+        FROM dettagli_ordine d 
+        JOIN ordini o ON d.ordine_id = o.id 
+        WHERE date(o.data_ingresso) BETWEEN ? AND ?
+    """, (start_date, end_date_raw))
+    capi_entrati_period = cursor.fetchone()[0] or 0
+
+    # 3e. Top Clienti (MODIFICATA PER CONTARE I CAPI)
+    # Usiamo una subquery per contare i capi specifici di quel cliente nel periodo, evitando duplicazioni sulla somma totale
+    params_clients = (start_date, end_date_raw, start_date, end_date_raw)
+    cursor.execute("""
+        SELECT c.nome, c.cognome, SUM(o.totale) as total_spent,
+        (SELECT COUNT(d.id) FROM dettagli_ordine d 
+         JOIN ordini o2 ON d.ordine_id = o2.id 
+         WHERE o2.cliente_id = c.id AND date(o2.data_ingresso) BETWEEN ? AND ?) as total_items
+        FROM ordini o JOIN clienti c ON o.cliente_id = c.id
+        WHERE date(o.data_ingresso) BETWEEN ? AND ?
+        GROUP BY c.id ORDER BY total_spent DESC LIMIT 10
+    """, params_clients)
+    top_clients = [dict(row) for row in cursor.fetchall()]
+
+    # 3f. Capi Ritirati e Totali (Globali del periodo)
+    cursor.execute("""
+        SELECT SUM(CASE WHEN d.ritirato = 1 THEN 1 ELSE 0 END) as ritirati
+        FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id
+        WHERE date(o.data_ingresso) BETWEEN ? AND ?
+    """, (start_date, end_date_raw))
+    row_ritiri = cursor.fetchone()
+    capi_ritirati = row_ritiri[0] or 0
+
+    cursor.execute("""
+        SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati,
+               SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare
+        FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?
+    """, (start_date, end_date_raw))
+    row_pagamenti = cursor.fetchone()
+    ordini_pagati = row_pagamenti[0] or 0
+    ordini_da_pagare = row_pagamenti[1] or 0
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM ordini 
+        WHERE fiscale_emesso = 1 AND stato = 'Consegnato' 
+        AND date(data_ingresso) BETWEEN ? AND ?
+    """, (start_date, end_date_raw))
+    scontrini_prodotti = cursor.fetchone()[0]
+
+    # 4. DETTAGLIO CAPI RITIRATI PER CLIENTE
+    cursor.execute("""
+        SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso
+        FROM dettagli_ordine d
+        JOIN ordini o ON d.ordine_id = o.id
+        JOIN clienti c ON o.cliente_id = c.id
+        WHERE d.ritirato = 1
+        AND date(o.data_ingresso) BETWEEN ? AND ?
+        ORDER BY c.nome, c.cognome
+    """, (start_date, end_date_raw))
+    
+    raw_ritirati = cursor.fetchall()
+    ritirati_by_client = defaultdict(list)
+    for r in raw_ritirati:
+        nome_completo = f"{r['nome']} {r['cognome'] or ''}".strip()
+        ritirati_by_client[nome_completo].append({
+            'capo': r['capo'],
+            'prezzo': r['prezzo'],
+            'data': r['data_ingresso']
+        })
+    
+    ritirati_dettaglio = []
+    for cliente, items in ritirati_by_client.items():
+        ritirati_dettaglio.append({'cliente': cliente, 'items': items})
+    
+    ritirati_dettaglio.sort(key=lambda x: x['cliente'])
+
+    conn.close()
+    
+    return jsonify({
+        'trend_daily': trend_daily, 
+        'top_items': top_items,
+        'ritirati_dettaglio': ritirati_dettaglio,
+        'stats': {
+            'fiscal_count': fiscal_count,
+            'fiscal_value': fiscal_value,
+            'total_revenue': total_revenue,
+            'top_clients': top_clients,
+            'capi_ritirati': capi_ritirati,
+            'capi_totali': capi_entrati_period, 
+            'ordini_pagati': ordini_pagati,
+            'ordini_da_pagare': ordini_da_pagare,
+            'scontrini_prodotti': scontrini_prodotti
+        }
+    })
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.5 (Stats Integration) ---")
+    print("--- AVVIO WASHIFY V.1.8.0 (Stats Enhanced) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
