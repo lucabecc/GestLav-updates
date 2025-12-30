@@ -1,15 +1,17 @@
 from flask import Flask, render_template, request, jsonify
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import win32print
 import serial
 import socket
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 import shutil
 import struct
+import json
 
 # --- CONFIGURAZIONE PERCORSI ASSOLUTI ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +22,10 @@ app = Flask(__name__, template_folder=TEMPLATE_DIR)
 # --- CONFIGURAZIONE ---
 SEDE = "MARINA"
 DB_NAME = "lavanderia.db"
+
+# --- CONFIGURAZIONE WHATSAPP (CARTELLA SCAMBIO) ---
+PATH_WA_OUT = r"C:\Washify_Whatsapp\Da_Inviare"
+PATH_WA_ESITI = r"C:\Washify_Whatsapp\Esiti"
 
 # --- CONFIGURAZIONE AGGIORNAMENTI ---
 GITHUB_USER = "lucabecc"
@@ -92,7 +98,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                  
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                    
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -136,10 +142,8 @@ def get_listino_dict():
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
-# --- GESTIONE STAMPANTE FISCALE (FIX 0 EURO - VERSIONE ROBUSTA) ---
-
+# --- GESTIONE STAMPANTE FISCALE ---
 def flush_socket_aggressive(s):
-    """Svuota il buffer in lettura"""
     s.settimeout(0.2) 
     try:
         while True:
@@ -151,10 +155,6 @@ def flush_socket_aggressive(s):
         print(f"   [FLUSH ERROR] {e}")
 
 def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
-    """
-    Funzione: STAMPA FISCALE
-    """
-    
     ip = get_setting("ip_fiscal")
     if not ip:
         print("IP Fiscale non configurato.")
@@ -170,51 +170,31 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
         
         print("1. Connessione alla stampante...")
         s.connect((ip, 9100))
-        
-        # Reset iniziale (pulisce il buffer)
         s.sendall(b'\x1b\x40') 
         time.sleep(0.5)
 
         for item in items:
-            # 1. PULIZIA DESCRIZIONE
             nome_raw = str(item['nome']).replace('"', '').replace("'", "")
             desc = nome_raw[:20]
-            
-            # 2. FORMATTAZIONE PREZZO
-            try:
-                valore = float(item['prezzo'])
-            except:
-                valore = 0.0
-            
-            # Trasforma 10.5 in "10,50" (virgola per le stampanti italiane)
+            try: valore = float(item['prezzo'])
+            except: valore = 0.0
             prezzo_str = f"{valore:.2f}".replace('.', ',')
-            
-            # 3. COMANDO UNICO
             comando = f'"{desc}"1*{prezzo_str}1R\r\n'
-            
             print(f"   -> Riga inviata: {comando.strip()}")
             s.sendall(comando.encode('cp858', errors='ignore'))
             time.sleep(0.1)
 
-        # Invio Codice Lotteria (se c'è)
         if codice_lotteria:
             cmd_lotteria = f"C{codice_lotteria.upper()}\r\n"
             s.sendall(cmd_lotteria.encode('cp858'))
             time.sleep(0.2)
         
-        # Chiusura Scontrino (1T = Totale)
         print("3. Chiusura scontrino (1T)...")
         s.sendall(b"1T\r\n")
-        
         time.sleep(1.5)
-        
-        # Chiusura connessione pulita
-        try:
-            s.shutdown(socket.SHUT_RDWR)
-        except:
-            pass
+        try: s.shutdown(socket.SHUT_RDWR)
+        except: pass
         s.close()
-        
         print("--- STAMPA COMPLETATA ---")
         return True
         
@@ -301,9 +281,6 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
     except Exception as e: return False
 
 def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx_date=False, codice_lotteria=""):
-    """
-    Questa funzione stampa SOLO lo scontrino di cortesia (non fiscale) sulla stampante Windows (Star).
-    """
     stampante = get_setting("printer_star")
     header_text = get_setting("ticket_header")
     footer_text = get_setting("ticket_footer")
@@ -347,19 +324,15 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
             if sconto > 0: buffer += enc(f"SCONTO APPLICATO: -{sconto:.2f}") + EURO + b"\n"
             buffer += ALIGN_CENTER + S_WIDE + enc(f"N. Capi: {num_capi_tot}\n")
             
-            # --- MODIFICA RICHIESTA: Se pagato, NON stampare "DA PAGARE" ---
             buffer += S_TOT + BOLD_ON + enc(f"TOT: {totale:.2f}") + EURO + b"\n" + BOLD_OFF
             
             residuo = max(0, totale - acconto)
             
-            # Logica: Se c'è ancora debito e NON è segnato come pagato, scrivo "DA PAGARE"
             if residuo > 0.01 and not pagato:
                 buffer += S_WIDE + b"DA PAGARE\n" + S_NORM + ALIGN_LEFT
             else:
-                 # Se è tutto pagato, non scrivo nulla qui, scriverò "PAGATO" sotto
                 buffer += S_NORM + ALIGN_LEFT
             
-            # --- LOGICA SALDO / PAGATO ---
             if acconto > 0:
                 if residuo > 0.01 and not pagato: 
                     buffer += ALIGN_CENTER + S_WIDE + enc(f"DA SALDARE: {residuo:.2f}") + EURO + b"\n" + S_NORM + ALIGN_LEFT
@@ -381,6 +354,63 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
         finally: win32print.ClosePrinter(hPrinter)
         return True
     except Exception as e: return False
+
+def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
+    stampante = get_setting("printer_star")
+    S_HUGE = get_star_font("huge")
+    
+    try:
+        hPrinter = win32print.OpenPrinter(stampante)
+        try:
+            hJob = win32print.StartDocPrinter(hPrinter, 1, ("Riepilogo", None, "RAW")); win32print.StartPagePrinter(hPrinter)
+            ALIGN_CENTER = b'\x1b\x1d\x61\x01'; ALIGN_LEFT = b'\x1b\x1d\x61\x00'
+            BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_CP858 = b'\x1b\x1d\x74\x04'
+            def enc(txt): return txt.encode('cp858', errors='replace')
+            
+            buffer = b'\x1b@' + CMD_CP858 
+            buffer += ALIGN_CENTER 
+            buffer += b"\n"
+            buffer += S_HUGE + BOLD_ON + enc(f"ORDINE {num_visibile}\n") + BOLD_OFF
+            buffer += b"\n"
+            buffer += S_HUGE + enc(f"{cliente_nome[:20].upper()}\n")
+            buffer += b"\n"
+            
+            buffer += b"\n\n\n\n\n" + CUT
+            
+            win32print.WritePrinter(hPrinter, buffer)
+            win32print.EndPagePrinter(hPrinter); win32print.EndDocPrinter(hPrinter)
+        finally: win32print.ClosePrinter(hPrinter)
+        return True
+    except Exception as e: return False
+
+
+# --- FUNZIONE FORMATTAZIONE WHATSAPP ---
+def formatta_scontrino_whatsapp(nome_cliente, num_scontrino, carrello, totale, acconto, data_ritiro):
+    text = f"*LAVANDERIA WASHIFY*\n"
+    text += f"Ordine N. *{num_scontrino}*\n"
+    text += f"Cliente: {nome_cliente.strip()}\n"
+    text += f"Ritiro: *{data_ritiro}*\n"
+    text += "--------------------\n"
+    
+    for item in carrello:
+        prezzo = f"{item['prezzo']:.2f}"
+        nome = item['nome'][:20]
+        text += f"{nome} : € {prezzo}\n"
+        
+    text += "--------------------\n"
+    text += f"*TOTALE: € {totale:.2f}*\n"
+    if acconto > 0:
+        text += f"Acconto: € {acconto:.2f}\n"
+        residuo = max(0, totale - acconto)
+        if residuo > 0:
+            text += f"*DA PAGARE: € {residuo:.2f}*\n"
+        else:
+            text += "*PAGATO* ✅\n"
+    else:
+         text += "*DA PAGARE* ❌\n"
+         
+    text += "\nGrazie e arrivederci!"
+    return urllib.parse.quote(text)
 
 # --- ROTTE API ---
 @app.route('/')
@@ -531,15 +561,11 @@ def cerca_ordini_aperti():
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
     cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk, pagato FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone()
-    # Se è pagato ma l'acconto era minore del totale (bug vecchio), forziamo visivamente per il frontend
     totale = res[0]
     pagato = res[4]
     acconto = res[1]
-    if pagato == 1:
-        totale_versato = totale # Se è pagato, consideriamo versato tutto
-    else:
-        totale_versato = acconto
-
+    if pagato == 1: totale_versato = totale
+    else: totale_versato = acconto
     info = {'totale_ordine': totale, 'totale_versato': totale_versato, 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': pagato}
     cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
@@ -549,7 +575,6 @@ def consegna_items():
     ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); metodo = request.json.get('metodo_pagamento', '')
     conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
     
-    # Recupera ordine_id dal primo item
     ordine_id = None
     if ids:
         cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
@@ -571,38 +596,29 @@ def consegna_items():
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
         if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
         
-        # --- LOGICA STAMPA FISCALE ALLA CONSEGNA ---
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,))
-            
-            # Recupera codice lotteria cliente
             cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,))
             res_cli = cursor.fetchone()
             cod_lotteria = res_cli[0] if res_cli else ""
-            
-            # Crea un carrello "fittizio" per la stampa fiscale dell'importo incassato
             item_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
-            
             if incasso > 0:
                 success = stampa_fiscale_vendita(item_fiscale, incasso, cod_lotteria)
                 if success: msg = "✅ Scontrino Fiscale Stampato!"
                 else: msg = "❌ Errore Stampa Fiscale!"
-            else:
-                msg = "Importo 0, niente scontrino."
+            else: msg = "Importo 0, niente scontrino."
                 
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
 @app.route('/salva_ordine', methods=['POST'])
 def salva_ordine():
     d = request.json; listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    # Qui ci assicuriamo di prendere i dati freschi dalla richiesta
     carrello = d['carrello']
     data_ritiro_raw = d['data_ritiro']
     sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
-    pagato_bool = d['pagato'] # Boolean dal frontend
+    pagato_bool = d['pagato'] 
     metodo = d['metodo']
     is_approx = d.get('is_approx', False)
-    
     azione = d.get('azione', 'stampa') 
 
     dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
@@ -610,14 +626,10 @@ def salva_ordine():
     totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
     solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
     
-    # --- FIX RICONSEGNA DA PAGARE ---
-    # Se l'utente ha spuntato "Pagamento Anticipato", forziamo l'acconto a coprire tutto il totale.
-    # Così nel database acconto == totale e il residuo sarà 0.
     if pagato_bool:
         acconto = totale
         pagato = True
     else:
-        # Se non è spuntato, controlliamo se l'acconto manuale copre tutto
         if acconto >= totale: 
             pagato = True
         else: 
@@ -640,8 +652,6 @@ def salva_ordine():
     contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello)
     fiscal_always = get_setting("fiscal_always") == "1"
     
-    # --- LOGICA FIX STAMPA FISCALE ---
-    # Se pagato con carta, DEVE stampare fiscale subito
     if (pagato and metodo == 'Carta'): 
         stampa_ora = True
     elif contiene_prodotti or fiscal_always: 
@@ -658,27 +668,67 @@ def salva_ordine():
         item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
     conn.commit(); conn.close()
     
-    # --- LOGICA STAMPA SCONTRINO FISCALE ---
     if stampa_ora:
         print(f"DEBUG SALVA ORDINE: Invio fiscale di {len(carrello)} elementi.")
-        
         if pagato:
             stampa_fiscale_vendita(carrello, totale, codice_lotteria)
         else:
-            # Acconto parziale
             item_acconto = [{'nome': 'Acconto Lavanderia', 'prezzo': acconto}]
             stampa_fiscale_vendita(item_acconto, acconto, codice_lotteria)
 
-    # --- LOGICA STAMPA CORTESIA E ETICHETTE ---
+    # --- LOGICA STAMPA CORTESIA / WHATSAPP ---
+    msg_wa = "Nessun invio"
+    
     if not solo_prodotti:
         if azione == 'stampa':
-            # Passiamo i valori aggiornati (acconto = totale se pagato) alla stampa cortesia
             stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx, codice_lotteria)
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
-        elif azione == 'whatsapp' or azione == 'email':
-            stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+        
+        elif azione == 'whatsapp':
+            # 1. Recupera telefono
+            conn = get_db(); cursor = conn.cursor()
+            cursor.execute("SELECT telefono FROM clienti WHERE id = ?", (d['cliente_id'],))
+            res_tel = cursor.fetchone()
+            conn.close()
             
-    return jsonify({"status": "success", "id_ordine": oid})
+            telefono = res_tel['telefono'] if res_tel else ""
+            
+            if len(telefono) > 5:
+                # 2. Prepara e salva file per il bot
+                testo_msg = formatta_scontrino_whatsapp(d['cliente_nome'], nuovo_num, carrello, totale, acconto, data_ritiro_str)
+                nome_file_json = f"ord_{oid}.json"
+                path_json = os.path.join(PATH_WA_OUT, nome_file_json)
+                
+                dati_bot = { "telefono": telefono, "messaggio": urllib.parse.unquote(testo_msg) }
+                
+                if not os.path.exists(PATH_WA_OUT): os.makedirs(PATH_WA_OUT)
+                if not os.path.exists(PATH_WA_ESITI): os.makedirs(PATH_WA_ESITI)
+
+                with open(path_json, 'w', encoding='utf-8') as f: json.dump(dati_bot, f)
+                
+                # 3. Polling attesa risposta (Max 10s)
+                esito_path = os.path.join(PATH_WA_ESITI, f"ord_{oid}.txt")
+                attesa = 0
+                msg_wa = "⏳ Timeout WhatsApp"
+                while attesa < 100:
+                    if os.path.exists(esito_path):
+                        with open(esito_path, 'r') as f: esito = f.read()
+                        msg_wa = "✅ WhatsApp Inviato!" if esito == "OK" else "❌ Errore Invio WhatsApp"
+                        try: os.remove(esito_path) 
+                        except: pass
+                        break
+                    time.sleep(0.1)
+                    attesa += 1
+            else:
+                msg_wa = "❌ Cliente senza telefono!"
+            
+            # Stampa comunque etichette
+            stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+
+        elif azione == 'email':
+             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
+            
+    return jsonify({"status": "success", "id_ordine": oid, "msg_wa": msg_wa})
 
 @app.route('/sospendi_ordine', methods=['POST'])
 def sospendi_ordine():
@@ -716,7 +766,6 @@ def get_items_scontrino():
     
     if not order_id: conn.close(); return jsonify({'status': 'error', 'msg': 'Nessun risultato trovato.'})
     
-    # --- MODIFICA RICHIESTA: Se cerco per CAPO, restituisco SOLO quel capo ---
     if tipo == 'capo' and target_item_id:
         cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE id = ?", (target_item_id,))
     else:
@@ -736,10 +785,27 @@ def conferma_pronti():
             if conflict: conn.close(); return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena} ({t}) OCCUPATA dall'ordine #{conflict[0]}!"})
     if ids:
         pl = ','.join(['?']*len(ids)); 
-        # cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ? AND id NOT IN ({pl})", [oid] + ids) # COMMENTATO PERCHÈ ORA SE CERCHI SINGOLO CAPO NON DEVI RESETTARE GLI ALTRI
         cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena] + ids)
     else: cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
+
+@app.route('/api/stampa_riepilogo', methods=['POST'])
+def api_stampa_riepilogo():
+    try:
+        oid = request.json.get('ordine_id')
+        conn = get_db(); cursor = conn.cursor()
+        cursor.execute("SELECT o.num_scontrino, o.data_ritiro, c.nome, c.cognome FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE o.id = ?", (oid,))
+        res = cursor.fetchone()
+        conn.close()
+        
+        if not res: return jsonify({'status': 'error', 'msg': 'Ordine non trovato'})
+        
+        nome_completo = f"{res['nome']} {res['cognome'] or ''}".strip()
+        ok = stampa_riepilogo_ordine_printer(res['num_scontrino'], nome_completo, res['data_ritiro'])
+        
+        if ok: return jsonify({'status': 'success', 'msg': 'Riepilogo stampato!'})
+        else: return jsonify({'status': 'error', 'msg': 'Errore stampa riepilogo'})
+    except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/modifica_capo_ordine', methods=['POST'])
 def modifica_capo_ordine():
@@ -808,144 +874,107 @@ def stampa_etichetta_singola():
     try:
         d = request.json
         capo_id = d.get('capo_id')
-        
         conn = get_db(); cursor = conn.cursor()
-        
-        # Recupero dettaglio capo
         cursor.execute("SELECT * FROM dettagli_ordine WHERE id = ?", (capo_id,))
         capo = cursor.fetchone()
-        
         if not capo: return jsonify({'status': 'error', 'msg': 'Capo non trovato'})
-        
-        # Recupero Ordine per numero e cliente
         cursor.execute("SELECT * FROM ordini WHERE id = ?", (capo['ordine_id'],))
         ordine = cursor.fetchone()
-        
-        # Recupero Cliente
         cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
         cliente = cursor.fetchone()
         cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
-        
         conn.close()
-        
-        # Preparo l'oggetto per la funzione stampa (si aspetta una lista con 'id' e 'nome')
         item_obj = {'id': capo['id'], 'nome': capo['capo']}
-        
         ok = stampa_etichette(ordine['num_scontrino'], [item_obj], cliente_nome, ordine['data_ritiro'])
-        
         if ok: return jsonify({'status': 'success', 'msg': 'Etichetta singola stampata!'})
         else: return jsonify({'status': 'error', 'msg': 'Errore durante la stampa'})
-        
-    except Exception as e:
-        return jsonify({'status': 'error', 'msg': str(e)})
+    except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/api/ristampa_ordine', methods=['POST'])
 def ristampa_ordine():
     try:
         d = request.json
         oid = d.get('id')
-        tipo = d.get('tipo') # 'scontrino' o 'etichette'
-        
+        tipo = d.get('tipo') 
         conn = get_db(); cursor = conn.cursor()
-        
-        # Recupero Ordine
         cursor.execute("SELECT * FROM ordini WHERE id = ?", (oid,))
         ordine = cursor.fetchone()
         if not ordine: return jsonify({'status': 'error', 'msg': 'Ordine non trovato'})
-        
-        # Recupero Cliente (e CODICE LOTTERIA)
         cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
         cliente = cursor.fetchone()
         cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
         codice_lotteria = cliente['codice_lotteria'] if cliente and cliente['codice_lotteria'] else ""
-        
-        # Recupero Capi
         cursor.execute("SELECT id, capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id = ?", (oid,))
         carrello = [dict(row) for row in cursor.fetchall()]
-        
-        # Recupero flag data approssimativa
         is_approx = False
-        if 'is_approx_date' in ordine.keys():
-            is_approx = (ordine['is_approx_date'] == 1)
-
+        if 'is_approx_date' in ordine.keys(): is_approx = (ordine['is_approx_date'] == 1)
         conn.close()
         
         if tipo == 'scontrino':
-            # Ricalcolo totali per sicurezza
-            totale = ordine['totale']
-            sconto = ordine['sconto']
-            acconto = ordine['acconto']
-            pagato = (ordine['pagato'] == 1)
-            metodo = ordine['metodo_pagamento'] or "Contanti"
-            
+            totale = ordine['totale']; sconto = ordine['sconto']; acconto = ordine['acconto']; pagato = (ordine['pagato'] == 1); metodo = ordine['metodo_pagamento'] or "Contanti"
             data_ingresso_str = datetime.strptime(ordine['data_ingresso'].split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m %H:%M")
-            
-            ok = stampa_scontrino(
-                ordine['num_scontrino'], 
-                data_ingresso_str, 
-                cliente_nome, 
-                carrello, 
-                totale, 
-                sconto, 
-                acconto, 
-                ordine['data_ritiro'], 
-                pagato, 
-                metodo,
-                is_approx, # Passiamo il flag
-                codice_lotteria # Passiamo il codice lotteria
-            )
+            ok = stampa_scontrino(ordine['num_scontrino'], data_ingresso_str, cliente_nome, carrello, totale, sconto, acconto, ordine['data_ritiro'], pagato, metodo, is_approx, codice_lotteria)
             if ok: return jsonify({'status': 'success', 'msg': 'Scontrino inviato alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa scontrino'})
             
         elif tipo == 'etichette':
-            ok = stampa_etichette(
-                ordine['num_scontrino'],
-                carrello, # contiene 'id' e 'nome'
-                cliente_nome,
-                ordine['data_ritiro'] # Etichette usano SEMPRE data reale
-            )
+            ok = stampa_etichette(ordine['num_scontrino'], carrello, cliente_nome, ordine['data_ritiro'])
             if ok: return jsonify({'status': 'success', 'msg': 'Etichette inviate alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa etichette'})
-            
         return jsonify({'status': 'error', 'msg': 'Tipo stampa non valido'})
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'msg': str(e)})
+    except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/api/storico_cliente/<int:cliente_id>')
 def storico_cliente(cliente_id):
-    # Recupera tutto lo storico dal più vecchio al più recente, ESCLUDENDO quelli ancora attivi (quindi solo stato 'Consegnato')
     conn = get_db(); cursor = conn.cursor()
-    # Query: Recupera scontrini consegnati per quel cliente
-    cursor.execute("""
-        SELECT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, 
-        d.capo, d.prezzo 
-        FROM ordini o 
-        JOIN dettagli_ordine d ON o.id = d.ordine_id 
-        WHERE o.cliente_id = ? AND o.stato = 'Consegnato' 
-        ORDER BY o.data_ingresso ASC
-    """, (cliente_id,))
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    # Raggruppa per ordine
+    cursor.execute("""SELECT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, d.capo, d.prezzo FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.cliente_id = ? AND o.stato = 'Consegnato' ORDER BY o.data_ingresso ASC""", (cliente_id,))
+    rows = cursor.fetchall(); conn.close()
     storico = {}
     for r in rows:
         oid = r['id']
-        if oid not in storico:
-            storico[oid] = {
-                'num_scontrino': r['num_scontrino'],
-                'data_ingresso': r['data_ingresso'],
-                'data_ritiro': r['data_ritiro'],
-                'totale': r['totale'],
-                'capi': []
-            }
+        if oid not in storico: storico[oid] = {'num_scontrino': r['num_scontrino'], 'data_ingresso': r['data_ingresso'], 'data_ritiro': r['data_ritiro'], 'totale': r['totale'], 'capi': []}
         storico[oid]['capi'].append({'capo': r['capo'], 'prezzo': r['prezzo']})
-        
     return jsonify(list(storico.values()))
+
+# --- NUOVA API STATISTICHE ---
+@app.route('/api/get_stats')
+def api_get_stats():
+    start_date = request.args.get('start', '2000-01-01')
+    end_date = request.args.get('end', '2100-01-01')
+    
+    conn = get_db(); cursor = conn.cursor()
+    
+    # Statistiche Giornaliere (Capi + Incasso)
+    # Nota: SQLite non ha DATE(), si usa substr o strftime. Qui usiamo date() che funziona nelle versioni recenti.
+    sql_trend = """
+        SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi 
+        FROM ordini o 
+        JOIN dettagli_ordine d ON o.id = d.ordine_id 
+        WHERE date(o.data_ingresso) BETWEEN ? AND ?
+        GROUP BY date(o.data_ingresso) 
+        ORDER BY date(o.data_ingresso) ASC
+    """
+    cursor.execute(sql_trend, (start_date, end_date))
+    trend_data = [dict(row) for row in cursor.fetchall()]
+    
+    # Top 10 Capi
+    sql_top_items = """
+        SELECT d.capo, count(d.id) as qty 
+        FROM dettagli_ordine d 
+        JOIN ordini o ON d.ordine_id = o.id
+        WHERE date(o.data_ingresso) BETWEEN ? AND ?
+        GROUP BY d.capo 
+        ORDER BY qty DESC 
+        LIMIT 10
+    """
+    cursor.execute(sql_top_items, (start_date, end_date))
+    top_items = [dict(row) for row in cursor.fetchall()]
+    
+    conn.close()
+    return jsonify({'trend': trend_data, 'top_items': top_items})
+
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.3 (Scontrino Fix e Pronti Singoli) ---")
+    print("--- AVVIO WASHIFY V.1.5 (Stats Integration) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)

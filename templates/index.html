@@ -11,16 +11,89 @@
     <script src="https://npmcdn.com/flatpickr/dist/l10n/it.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
         body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
-        .big-btn { height: 220px; font-size: 3rem; border-radius: 20px; font-weight: bold; box-shadow: 0 10px 20px rgba(0,0,0,0.1); transition: transform 0.2s; }
-        .big-btn:hover { transform: scale(1.02); }
-        .btn-ricezione { background: linear-gradient(45deg, #007bff, #0056b3); color: white; border: none; }
-        .btn-consegna { background: linear-gradient(45deg, #28a745, #1e7e34); color: white; border: none; }
-        .btn-pronti { background: linear-gradient(45deg, #6f42c1, #563d7c); color: white; border: none; font-size: 1.2rem; height: 80px; }
-        .btn-chiusura { background: linear-gradient(45deg, #dc3545, #b02a37); color: white; border: none; font-size: 1.2rem; height: 80px; }
-        .btn-settings { background: #6c757d; color: white; border: none; font-size: 1.5rem; height: 80px; width: 80px; border-radius: 20px; }
+        
+        /* --- NUOVO STILE PULSANTI HOME MODERNIZZATI --- */
+        .home-card {
+            border: none;
+            border-radius: 20px;
+            padding: 30px;
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: white;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+            transition: all 0.3s ease;
+            height: 250px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        .home-card:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.25);
+        }
+
+        .home-card i {
+            font-size: 4.5rem;
+            margin-bottom: 15px;
+            opacity: 0.9;
+        }
+
+        /* Colore Blu/Celeste Moderno per Ricezione */
+        .btn-ricezione { background: linear-gradient(135deg, #0061f2 0%, #00c6ff 100%); }
+        
+        /* Colore Verde/Smeraldo Moderno per Consegna */
+        .btn-consegna { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+
+        /* NUOVA CLASSE PER IL TASTO PRONTI IN RIGA */
+        .btn-pronti-row {
+            background: linear-gradient(135deg, #ff9900 0%, #ffc107 100%);
+            color: white;
+            border: none;
+            font-size: 1.2rem;
+            height: 80px;
+            width: 100%;
+            border-radius: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: 0.2s;
+            font-weight: bold;
+        }
+        
+        /* TASTO STATISTICHE (NUOVO) */
+        .btn-stats-row {
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            color: white;
+            border: none;
+            font-size: 1.2rem;
+            height: 80px;
+            width: 100%;
+            border-radius: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: 0.2s;
+            font-weight: bold;
+        }
+
+        .btn-settings { 
+            background: #6c757d; color: white; border: none; font-size: 1.5rem; height: 80px; width: 100%; border-radius: 20px; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: 0.2s;
+        }
+        .btn-chiusura { 
+            background: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%); 
+            color: white; border: none; font-size: 1.2rem; height: 80px; width: 100%; border-radius: 20px; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: 0.2s; font-weight: bold;
+        }
+        .btn-settings:hover, .btn-chiusura:hover, .btn-pronti-row:hover, .btn-stats-row:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
+
+        /* --- FINE STILE HOME --- */
+
         .alert-glass-yellow { background-color: #fff3cd; border: 2px solid #ffc107; color: #856404; border-radius: 15px; cursor: pointer; text-align: center; padding: 15px; font-weight: bold; font-size: 1.2rem; width: 100%; margin-top: 15px; display: none; animation: pulse-border 2s infinite; box-shadow: 0 4px 6px rgba(0,0,0,0.1); user-select: none; }
         .alert-glass-yellow:active { transform: scale(0.98); background-color: #ffeeba; }
         @keyframes pulse-border { 0% { border-color: #ffc107; } 50% { border-color: #ffca2c; box-shadow: 0 0 15px #ffc107; } 100% { border-color: #ffc107; } }
@@ -64,15 +137,82 @@
 <body>
 
 <div class="container mt-5" id="view-home">
-    <h1 class="text-center mb-4 text-primary fw-bold">Washify {{ sede }}</h1>
-    <div class="row g-4 mb-5">
-        <div class="col-md-6"><button class="btn btn-ricezione w-100 big-btn" onclick="vaiRicezione()">📥 NUOVO</button></div>
-        <div class="col-md-6"><button class="btn btn-consegna w-100 big-btn" onclick="vaiConsegna()">📤 RICONSEGNA</button></div>
+    <h1 class="text-center mb-4 text-primary fw-bold" style="font-size: 3rem;">Washify {{ sede }}</h1>
+    
+    <div class="row g-4 justify-content-center mb-4">
+        <div class="col-md-5">
+            <button class="home-card btn-ricezione" onclick="vaiRicezione()">
+                <i class="bi bi-box-arrow-in-down"></i>
+                NUOVO
+            </button>
+        </div>
+        <div class="col-md-5">
+            <button class="home-card btn-consegna" onclick="vaiConsegna()">
+                <i class="bi bi-box-arrow-up"></i>
+                RICONSEGNA
+            </button>
+        </div>
     </div>
-    <div class="row g-3 justify-content-center">
-        <div class="col-md-4"><button class="btn btn-pronti w-100 rounded-pill shadow" onclick="vaiPronti()">🏁 SEGNALA PRONTI</button></div>
-        <div class="col-md-2"><button class="btn btn-settings w-100 rounded-pill shadow" onclick="apriImpostazioni()"><i class="bi bi-gear-fill"></i></button></div>
-        <div class="col-md-4"><button class="btn btn-chiusura w-100 rounded-pill shadow" onclick="chiusuraFiscale()">🔐 CHIUSURA FISCALE</button></div>
+
+    <div class="row g-3 justify-content-center align-items-center">
+        <div class="col-md-3">
+            <button class="btn-pronti-row" onclick="vaiPronti()">
+                <i class="bi bi-check-circle-fill"></i> PRONTI
+            </button>
+        </div>
+        <div class="col-md-3">
+             <button class="btn-stats-row" onclick="vaiStatistiche()">
+                <i class="bi bi-graph-up"></i> STATISTICHE
+            </button>
+        </div>
+        <div class="col-md-3">
+            <button class="btn btn-chiusura" onclick="chiusuraFiscale()">
+                <i class="bi bi-lock-fill"></i> CHIUSURA FISCALE
+            </button>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-settings" onclick="apriImpostazioni()" title="Impostazioni">
+                <i class="bi bi-gear-fill"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid mt-3 hidden" id="view-stats">
+    <div class="d-flex justify-content-between mb-3">
+        <button class="btn btn-secondary" onclick="vaiHome()">⬅ Home</button>
+        <h2 class="text-primary fw-bold">📊 Statistiche & Analisi</h2>
+    </div>
+    
+    <div class="card p-3 shadow-sm mb-3">
+        <div class="row align-items-end g-2">
+            <div class="col-md-3">
+                <label class="fw-bold">Dal:</label>
+                <input type="date" id="stats-start" class="form-control">
+            </div>
+            <div class="col-md-3">
+                <label class="fw-bold">Al:</label>
+                <input type="date" id="stats-end" class="form-control">
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-primary w-100" onclick="caricaStatistiche()">🔍 Analizza</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-md-8">
+            <div class="card shadow p-3">
+                <h5 class="text-center fw-bold">📉 Capi Lavati (Giornaliero)</h5>
+                <canvas id="chart-trend"></canvas>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card shadow p-3">
+                <h5 class="text-center fw-bold">🏆 Top 10 Capi</h5>
+                <canvas id="chart-items"></canvas>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -224,6 +364,7 @@
             </div>
             <ul id="lista-pronti" class="list-group mb-4"></ul>
             <button class="btn btn-success w-100 btn-lg fw-bold" onclick="confermaPronti()">✅ CONFERMA SELEZIONATI</button>
+            <button class="btn btn-warning w-100 btn-lg fw-bold mt-2" onclick="stampaRiepilogoOrdine()">🖨️ STAMPA RIEPILOGO ORDINE</button>
         </div>
         <div id="msg-pronti" class="alert mt-3" style="display:none;"></div>
     </div>
@@ -525,20 +666,22 @@
     let listinoRaw = []; 
     let sortableInstance = null;
     let metodoConsegnaScelto = 'Contanti';
-    let currentDeliveryClientId = null; // Memorizza l'ID del cliente selezionato nella Riconsegna
+    let currentDeliveryClientId = null; 
+    let chartTrend = null; let chartItems = null; // Variabili per i grafici
 
-    // --- NUOVA LOGICA AGGIORNAMENTO AUTOMATICO ---
     document.addEventListener("DOMContentLoaded", function() {
-        // Appena il sito è pronto, controlla silenziosamente se ci sono aggiornamenti
         autoCheckUpdate();
+        // Imposta date default statistiche (Ultimi 30 giorni)
+        const today = new Date().toISOString().split('T')[0];
+        const prevMonth = new Date(); prevMonth.setDate(prevMonth.getDate() - 30);
+        document.getElementById('stats-end').value = today;
+        document.getElementById('stats-start').value = prevMonth.toISOString().split('T')[0];
     });
 
     async function autoCheckUpdate() {
         try {
             const res = await fetch('/api/check_update');
             const data = await res.json();
-            
-            // Se c'è un aggiornamento, apri il modal
             if (data.update_available) {
                 document.getElementById('ver-old').innerText = data.local;
                 document.getElementById('ver-new').innerText = data.remote;
@@ -574,14 +717,99 @@
             spinner.classList.add('hidden');
         }
     }
-    // --- FINE NUOVA LOGICA ---
 
     async function initCalendar() { try { const res = await fetch('/api/carico_lavoro'); caricoLavoro = await res.json(); picker = flatpickr("#data-ritiro", { locale: "it", dateFormat: "d/m", defaultDate: new Date().fp_incr(3), minDate: "today", disable: [ function(date) { if (date.getDay() === 0) return true; let dm = date.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}).replace('/', '-'); let fullDate = date.toISOString().split('T')[0]; return festivita.includes(dm) || festivita.includes(fullDate); } ], onDayCreate: function(dObj, dStr, fp, dayElem) { let key = dayElem.dateObj.toLocaleDateString('it-IT', {day:'2-digit', month:'2-digit'}); if (dayElem.classList.contains("flatpickr-disabled")) { dayElem.classList.add("festivo"); } if (caricoLavoro[key]) { dayElem.innerHTML += `<span class='capi-counter'>${caricoLavoro[key]}</span>`; } } }); } catch (e) { console.error("Errore Calendario:", e); } }
 
-    function vaiRicezione() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-ricezione').classList.remove('hidden'); initCalendar(); }
+    function vaiRicezione() { 
+        resetCliente(); // RESET FORZATO ALL'INGRESSO
+        document.getElementById('view-home').classList.add('hidden'); 
+        document.getElementById('view-ricezione').classList.remove('hidden'); 
+        initCalendar(); 
+    }
     function vaiConsegna() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-consegna').classList.remove('hidden'); document.getElementById('tabella-ordini').innerHTML=''; document.getElementById('cerca-consegna').value=''; document.getElementById('cerca-consegna').focus(); currentDeliveryClientId = null; }
     function vaiPronti() { document.getElementById('view-home').classList.add('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('view-pronti').classList.remove('hidden'); document.getElementById('input-pronti-scontrino').value=''; document.getElementById('input-pronti-capo').value=''; document.getElementById('input-catena').value=''; document.getElementById('box-lista-pronti').style.display='none'; document.getElementById('input-pronti-scontrino').focus(); }
-    function vaiHome() { document.getElementById('view-ricezione').classList.add('hidden'); document.getElementById('view-consegna').classList.add('hidden'); document.getElementById('view-pronti').classList.add('hidden'); document.getElementById('view-home').classList.remove('hidden'); resetCliente(); }
+    
+    // NUOVA FUNZIONE PER ANDARE ALLE STATISTICHE
+    function vaiStatistiche() {
+        document.getElementById('view-home').classList.add('hidden');
+        document.getElementById('view-stats').classList.remove('hidden');
+        caricaStatistiche();
+    }
+
+    function vaiHome() { document.getElementById('view-ricezione').classList.add('hidden'); document.getElementById('view-consegna').classList.add('hidden'); document.getElementById('view-pronti').classList.add('hidden'); document.getElementById('view-stats').classList.add('hidden'); document.getElementById('view-home').classList.remove('hidden'); resetCliente(); }
+
+    // --- FUNZIONI GRAFICI E STATISTICHE ---
+    async function caricaStatistiche() {
+        const start = document.getElementById('stats-start').value;
+        const end = document.getElementById('stats-end').value;
+        
+        try {
+            const res = await fetch(`/api/get_stats?start=${start}&end=${end}`);
+            const data = await res.json();
+            
+            aggiornaGraficoTrend(data.trend);
+            aggiornaGraficoItems(data.top_items);
+        } catch(e) {
+            console.error("Errore statistiche:", e);
+        }
+    }
+
+    function aggiornaGraficoTrend(data) {
+        const ctx = document.getElementById('chart-trend').getContext('2d');
+        if (chartTrend) chartTrend.destroy();
+        
+        const labels = data.map(x => x.data);
+        const values = data.map(x => x.tot_capi);
+        
+        chartTrend = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Capi Entrati',
+                    data: values,
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    }
+
+    function aggiornaGraficoItems(data) {
+        const ctx = document.getElementById('chart-items').getContext('2d');
+        if (chartItems) chartItems.destroy();
+        
+        const labels = data.map(x => x.capo);
+        const values = data.map(x => x.qty);
+        
+        chartItems = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Quantità',
+                    data: values,
+                    backgroundColor: [
+                        '#ff6384', '#36a2eb', '#ffce56', '#4bc0c0', '#9966ff',
+                        '#ff9f40', '#c9cbcf', '#ffcd56', '#4bc0c0', '#36a2eb'
+                    ]
+                }]
+            },
+            options: {
+                indexAxis: 'y', // Barre orizzontali per leggere meglio i nomi
+                responsive: true,
+                 scales: { x: { beginAtZero: true } }
+            }
+        });
+    }
+
 
     async function clienteRapido() { const res = await fetch('/get_cliente_rapido'); const c = await res.json(); selezionaCliente(c); const tabs = document.querySelectorAll('#pills-tab button'); if(tabs[3]) tabs[3].click(); }
 
@@ -602,13 +830,11 @@
         document.getElementById('pannello-capi').style.opacity = '1'; 
         document.getElementById('pannello-capi').style.pointerEvents = 'auto'; 
         
-        // MODIFICA: Cambia tasto Nuovo Cliente in Modifica Cliente
         const btnNuovo = document.getElementById('btn-nuovo-cliente');
         btnNuovo.innerText = "✏️ MODIFICA DATI";
-        btnNuovo.className = "btn btn-outline-primary w-100 btn-lg shadow-sm"; // Cambia stile per distinguerlo
+        btnNuovo.className = "btn btn-outline-primary w-100 btn-lg shadow-sm"; 
         btnNuovo.setAttribute('onclick', 'apriModificaCliente()');
 
-        // Carica preferenza scontrino
         if(c.preferenza_scontrino) {
             evidenziaAzionePreferita(c.preferenza_scontrino);
         } else {
@@ -666,21 +892,18 @@
         document.getElementById('pannello-capi').style.pointerEvents = 'none'; 
         document.getElementById('btn-alert-ritiri').style.display='none'; 
         
-        // MODIFICA: Ripristina tasto Nuovo Cliente
         const btnNuovo = document.getElementById('btn-nuovo-cliente');
         btnNuovo.innerText = "➕ NUOVO CLIENTE";
         btnNuovo.className = "btn btn-success w-100 btn-lg shadow-sm";
         btnNuovo.setAttribute('onclick', 'apriModalNuovoCliente()');
         
-        // Reset bottoni azione
         document.querySelectorAll('#actions-panel button').forEach(b => b.disabled = true);
         document.getElementById('btn-sospendi').disabled = true;
     }
 
-    // MODIFICA: Funzione per aprire il modal in modalità "Nuovo"
     function apriModalNuovoCliente() {
         document.getElementById('titoloModalCliente').innerText = "Nuova Anagrafica";
-        document.getElementById('new-id').value = ""; // ID vuoto = Nuovo
+        document.getElementById('new-id').value = ""; 
         document.getElementById('new-nome').value = "";
         document.getElementById('new-cognome').value = "";
         document.getElementById('new-tel').value = "";
@@ -692,7 +915,6 @@
         new bootstrap.Modal(document.getElementById('modalNuovoCliente')).show();
     }
 
-    // MODIFICA: Funzione per aprire il modal in modalità "Modifica"
     function apriModificaCliente() {
         if(!clienteCorrente) return;
         document.getElementById('titoloModalCliente').innerText = "Modifica Anagrafica";
@@ -723,7 +945,7 @@
         }; 
         
         let url = '/crea_cliente';
-        if (idCliente) { url = '/modifica_cliente'; } // Se c'è ID, chiama modifica
+        if (idCliente) { url = '/modifica_cliente'; } 
 
         const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)}); 
         const r = await res.json(); 
@@ -732,7 +954,7 @@
             bootstrap.Modal.getInstance(document.getElementById('modalNuovoCliente')).hide(); 
             r.nome_completo = r.nome; 
             r.preferenza_scontrino = 'stampa';
-            selezionaCliente(r); // Ricarica il cliente aggiornato
+            selezionaCliente(r); 
         } else { 
             alert(r.msg); 
         } 
@@ -774,36 +996,48 @@
     function togglePagamento() { isPagato = document.getElementById('check-pagato').checked; document.getElementById('box-metodi').classList.toggle('hidden', !isPagato); }
     function selectMetodo(m) { metodoScelto = m; document.querySelectorAll('.pay-option').forEach(e=>e.classList.remove('pay-selected')); document.getElementById(m==='Contanti'?'opt-contanti':'opt-carta').classList.add('pay-selected'); }
     
+    // --- MODIFICA WHATSAPP: SALVA ORDINE CON ALERT ---
     async function salvaOrdine(azione) { 
         if(!clienteCorrente) return alert("Manca Cliente!"); 
         
-        // Feedback visivo sul bottone premuto
         const btn = document.getElementById('btn-' + azione);
         const originalText = btn.innerText;
         btn.disabled = true;
         btn.innerText = "⏳...";
 
-        // Recuperiamo il valore della checkbox "Data Approssimativa"
         const isApprox = document.getElementById('check-approx').checked;
 
-        await fetch('/salva_ordine', {
-            method:'POST', 
-            headers:{'Content-Type':'application/json'}, 
-            body:JSON.stringify({
-                cliente_id:clienteCorrente.id, 
-                cliente_nome:clienteCorrente.nome_completo, 
-                carrello:carrello, 
-                data_ritiro:document.getElementById('data-ritiro').value, 
-                pagato:isPagato, 
-                metodo:isPagato?metodoScelto:'', 
-                sconto: parseFloat(document.getElementById('input-sconto').value)||0, 
-                acconto: parseFloat(document.getElementById('input-acconto').value)||0,
-                is_approx: isApprox, // Inviamo la scelta al server
-                azione: azione // stampa, whatsapp, email
-            })
-        }); 
-        
-        location.reload(); 
+        try {
+            const res = await fetch('/salva_ordine', {
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body:JSON.stringify({
+                    cliente_id:clienteCorrente.id, 
+                    cliente_nome:clienteCorrente.nome_completo, 
+                    carrello:carrello, 
+                    data_ritiro:document.getElementById('data-ritiro').value, 
+                    pagato:isPagato, 
+                    metodo:isPagato?metodoScelto:'', 
+                    sconto: parseFloat(document.getElementById('input-sconto').value)||0, 
+                    acconto: parseFloat(document.getElementById('input-acconto').value)||0,
+                    is_approx: isApprox,
+                    azione: azione
+                })
+            }); 
+            
+            const data = await res.json();
+            
+            // Se abbiamo un messaggio di ritorno per WhatsApp, mostralo
+            if (azione === 'whatsapp') {
+                alert(data.msg_wa || "Operazione completata");
+            }
+
+            location.reload(); 
+        } catch (e) {
+            alert("Errore di comunicazione: " + e);
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
     }
 
     async function sospendiOrdine() { if(!clienteCorrente) return alert("Manca Cliente!"); await fetch('/sospendi_ordine', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cliente_id:clienteCorrente.id, carrello:carrello, data_ritiro:document.getElementById('data-ritiro').value })}); alert("Ordine PAUSA 🅿️"); resetCliente(); }
@@ -821,8 +1055,6 @@
         ordineProntiId = d.ordine_id; 
         const ul = document.getElementById('lista-pronti'); 
         
-        // MODIFICA PER TE: Se cerco un CAPO (es 85), pulisco SEMPRE la lista, anche se l'ordine è lo stesso.
-        // Così vedo solo il risultato attuale (es 84).
         if(tipo === 'capo' || document.getElementById('input-pronti-scontrino').getAttribute('data-last-ord') != ordineProntiId) { 
             ul.innerHTML = ''; 
         } 
@@ -842,12 +1074,26 @@
     }
     async function confermaPronti() { let ids = []; document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); const catena = document.getElementById('input-catena').value; const res = await fetch('/conferma_pronti', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})}); const data = await res.json(); if(data.status === 'error') { alert(data.msg); } else { alert("Stati aggiornati!"); vaiHome(); } }
 
+    async function stampaRiepilogoOrdine() {
+        if(!ordineProntiId) return alert("Nessun ordine selezionato!");
+        const res = await fetch('/api/stampa_riepilogo', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ordine_id: ordineProntiId})
+        });
+        const data = await res.json();
+        if(data.status === 'success') {
+            alert(data.msg);
+        } else {
+            alert("Errore: " + data.msg);
+        }
+    }
+
     // --- RICONSEGNA E RISTAMPA ---
     let focusConsegna = -1;
     document.getElementById('cerca-consegna').addEventListener('input', async function() { focusConsegna = -1; currentDeliveryClientId = null; const val = this.value; const list = document.getElementById('suggerimenti-consegna'); const tableBody = document.getElementById('tabella-ordini'); list.innerHTML = ''; if (!val) { tableBody.innerHTML = ''; return; } if (val.match(/^\d+$/)) { cercaOrdini(val); list.innerHTML = ''; } else { const res = await fetch(`/cerca_cliente?q=${val}`); const data = await res.json(); data.forEach(c => { let li = document.createElement('li'); li.className = "list-group-item list-group-item-action"; li.innerHTML = `<strong>${c.nome_completo}</strong>`; li.onclick = () => { document.getElementById('cerca-consegna').value = c.nome_completo; currentDeliveryClientId = c.id; list.innerHTML = ''; cercaOrdini(null, c.id); }; list.appendChild(li); }); } });
     document.getElementById('cerca-consegna').addEventListener('keydown', function(e) { let x = document.getElementById('suggerimenti-consegna').getElementsByTagName('li'); if (x.length > 0) { handleArrowNav(e, 'suggerimenti-consegna', idx => { focusConsegna = idx; }, focusConsegna); } else if (e.key === 'Enter') { const val = this.value; if(val.match(/^\d+$/)) cercaOrdini(val); } });
 
-    // --- GESTORE TASTO F1 ---
     document.addEventListener('keydown', function(e) { 
         if (e.key === 'F1') {
             e.preventDefault();
@@ -896,7 +1142,6 @@
 
     let currentOrdRow = -1;
     document.addEventListener('keydown', function(e) { 
-        // Se siamo nel Modal, gestiamo la navigazione interna
         if (document.getElementById('modalConsegna').classList.contains('show')) {
             handleModalKeyNav(e);
             return;
@@ -913,7 +1158,6 @@
 
     let modalFocusIndex = -1;
     function handleModalKeyNav(e) {
-        // Ignora se siamo su input di sconto o edit
         if(e.target.tagName === 'INPUT') return;
 
         const items = document.querySelectorAll('#cons-lista li');
@@ -929,7 +1173,7 @@
             modalFocusIndex--;
             if (modalFocusIndex < 0) modalFocusIndex = items.length - 1;
             updateModalFocus(items);
-        } else if (e.key === ' ') { // Spazio per check/uncheck
+        } else if (e.key === ' ') { 
             e.preventDefault();
             if(modalFocusIndex > -1) {
                 const chk = items[modalFocusIndex].querySelector('.chk-ritiro');
@@ -940,19 +1184,16 @@
             }
         } else if (e.key === 'Enter') {
             e.preventDefault();
-            // Clicca il tasto verde di conferma fiscale o normale in base a visibilità
             const btnFisc = document.getElementById('btn-consegna-fiscale');
             const btnNorm = document.getElementById('btn-consegna-no-fisc');
             if(btnFisc.offsetParent !== null) btnFisc.click();
             else btnNorm.click();
         } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-            // Seleziona metodo di pagamento se visibile
             if(document.getElementById('box-metodi-consegna').style.display !== 'none') {
                 const cur = metodoConsegnaScelto;
                 selectMetodoConsegna(cur === 'Contanti' ? 'Carta' : 'Contanti');
             }
         } else if (e.key.toLowerCase() === 'p') {
-             // Stampa singola etichetta del capo selezionato
              if(modalFocusIndex > -1) {
                 const chk = items[modalFocusIndex].querySelector('.chk-ritiro');
                 stampaSingolaEtichetta(chk.value);
@@ -1013,7 +1254,6 @@
     async function apriDettaglioConsegna(id, nome, num) { 
         ordineConsegnaId = id; document.getElementById('cons-id').innerText = num; document.getElementById('cons-cliente').innerText = nome; document.getElementById('sconto-consegna').value = 0; 
         
-        // Reset metodi
         metodoConsegnaScelto = 'Contanti';
         selectMetodoConsegna('Contanti');
 
@@ -1028,7 +1268,7 @@
         renderConsegnaList(); 
         if(!modalConsegnaObj) modalConsegnaObj = new bootstrap.Modal(document.getElementById('modalConsegna')); 
         modalConsegnaObj.show(); 
-        modalFocusIndex = -1; // Reset navigazione tastiera
+        modalFocusIndex = -1; 
 
         document.getElementById('modalConsegna').addEventListener('hidden.bs.modal', function () {
             if(!document.getElementById('view-consegna').classList.contains('hidden')) { if(lastSearchQuery.type === 'num') cercaOrdini(lastSearchQuery.val, null); else if(lastSearchQuery.type === 'id') cercaOrdini(null, lastSearchQuery.val); }
@@ -1048,7 +1288,6 @@
         let statusDot = c.stato_lavorazione ? '<span class="status-dot status-verde"></span>' : '<span class="status-dot status-giallo"></span>'; 
         let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena} (${c.tipo_stoccaggio || 'Nastro'})</span>` : ''; 
         
-        // Tasto stampa singola etichetta
         let printSingleBtn = `<button class="btn btn-sm btn-outline-secondary ms-2" onclick="stampaSingolaEtichetta(${c.id})" title="Stampa Etichetta Singola"><i class="bi bi-tag-fill"></i></button>`;
 
         ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[ID: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}${printSingleBtn}</div></li>`; }); calcolaSaldoParziale(); }
@@ -1076,13 +1315,12 @@
         
         mostraIncasso(daIncassare); 
 
-        // Gestione visibilità metodi pagamento
         const boxMetodi = document.getElementById('box-metodi-consegna');
         if (daIncassare > 0) {
             boxMetodi.style.display = 'flex';
         } else {
             boxMetodi.style.display = 'none';
-            metodoConsegnaScelto = 'Contanti'; // Reset default se non si paga
+            metodoConsegnaScelto = 'Contanti'; 
         }
     }
 
@@ -1098,7 +1336,6 @@
         let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; 
         let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; 
         
-        // Uso il metodo selezionato nel modal, oppure vuoto se non c'è incasso
         let metodoFinale = incasso > 0 ? metodoConsegnaScelto : '';
 
         if (stampaFiscale) { 
@@ -1129,7 +1366,6 @@
         }
     }
     
-    // --- GESTIONE IMPOSTAZIONI E AGGIORNAMENTO ---
     async function apriImpostazioni() { 
         try {
             const res=await fetch('/api/get_settings'); 
@@ -1138,12 +1374,10 @@
             const btnRestore = document.getElementById('btn-restore');
             if (d.has_backup) { btnRestore.style.display = 'block'; } else { btnRestore.style.display = 'none'; }
 
-            // CARICA VALORI STAMPA
             document.getElementById('conf-header').value = d.ticket_header || '';
             document.getElementById('conf-footer').value = d.ticket_footer || '';
             document.getElementById('conf-print-logo').checked = (d.print_logo == '1');
             
-            // Nuovi selettori scontrino
             document.getElementById('conf-size-header').value = d.font_header || 'wide';
             document.getElementById('conf-size-num').value = d.font_num || 'big';
             document.getElementById('conf-size-cust').value = d.font_customer || 'big';
@@ -1151,7 +1385,6 @@
             document.getElementById('conf-size-total').value = d.font_total || 'huge'; 
             document.getElementById('conf-size-footer').value = d.font_footer || 'norm';
 
-            // --- CARICA VALORI ETICHETTA ---
             if(document.getElementById('conf-label-text')) document.getElementById('conf-label-text').value = d.label_custom_text || '';
             if(document.getElementById('conf-font-row1')) document.getElementById('conf-font-row1').value = d.font_label_row1 || 'huge';
             if(document.getElementById('conf-font-row2')) document.getElementById('conf-font-row2').value = d.font_label_row2 || 'huge';
@@ -1206,7 +1439,6 @@
     }
 
     async function salvaImpostazioniSenzaReload() {
-        // Safe getter per evitare crash se l'elemento HTML non esiste
         const getVal = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
         const getChk = (id) => { const el = document.getElementById(id); return el ? (el.checked ? "1" : "0") : "0"; };
 
