@@ -99,7 +99,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                     
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                      
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -863,8 +863,19 @@ def toggle_stato_pagamento():
     cursor.execute("SELECT pagato, totale FROM ordini WHERE id = ?", (oid,))
     res = cursor.fetchone()
     if res:
-        nuovo_stato = 0 if res['pagato'] == 1 else 1
-        nuovo_acconto = res['totale'] if nuovo_stato == 1 else 0
+        currentState = res['pagato']
+        # Se è pagato (1) -> Diventa da pagare (0)
+        # MODIFICA: Calcoliamo il valore dei capi GIA ritirati per non farli pagare due volte
+        if currentState == 1:
+            nuovo_stato = 0
+            cursor.execute("SELECT SUM(prezzo) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 1", (oid,))
+            valore_ritirati = cursor.fetchone()[0] or 0.0
+            nuovo_acconto = valore_ritirati # L'acconto diventa pari a ciò che è uscito
+        else:
+            # Se è da pagare (0) -> Diventa pagato (1)
+            nuovo_stato = 1
+            nuovo_acconto = res['totale']
+
         cursor.execute("UPDATE ordini SET pagato = ?, acconto = ? WHERE id = ?", (nuovo_stato, nuovo_acconto, oid))
         conn.commit()
     conn.close()

@@ -30,7 +30,11 @@
         .btn-stats-row { background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%); color: white; border: none; font-size: 1.2rem; height: 80px; width: 100%; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: 0.2s; font-weight: bold; }
         .btn-settings { background: #6c757d; color: white; border: none; font-size: 1.5rem; height: 80px; width: 100%; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: 0.2s; }
         .btn-chiusura { background: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%); color: white; border: none; font-size: 1.2rem; height: 80px; width: 100%; border-radius: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transition: 0.2s; font-weight: bold; }
-        .btn-settings:hover, .btn-chiusura:hover, .btn-pronti-row:hover, .btn-stats-row:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
+        
+        /* FIX HOVER SETTINGS E CHIUSURA */
+        .btn-settings:hover { background-color: #5a6268; color: white !important; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
+        .btn-chiusura:hover { background: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%); color: white !important; opacity: 0.9; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
+        .btn-pronti-row:hover, .btn-stats-row:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
 
         .alert-glass-yellow { background-color: #fff3cd; border: 2px solid #ffc107; color: #856404; border-radius: 15px; cursor: pointer; text-align: center; padding: 15px; font-weight: bold; font-size: 1.2rem; width: 100%; margin-top: 15px; display: none; animation: pulse-border 2s infinite; box-shadow: 0 4px 6px rgba(0,0,0,0.1); user-select: none; }
         .alert-glass-yellow:active { transform: scale(0.98); background-color: #ffeeba; }
