@@ -65,11 +65,14 @@ def init_db():
     cursor = conn.cursor()
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS clienti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT, telefono TEXT, indirizzo TEXT, citta TEXT, cap TEXT, data_nascita TEXT, note TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT, is_approx_date INTEGER DEFAULT 0)''')
+    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS ordini (id INTEGER PRIMARY KEY AUTOINCREMENT, num_scontrino INTEGER, cliente_id INTEGER, data_ingresso TIMESTAMP, data_ritiro TEXT, totale REAL, sconto REAL DEFAULT 0, pagato INTEGER DEFAULT 0, acconto REAL DEFAULT 0, pagamenti_parziali REAL DEFAULT 0, fiscale_emesso INTEGER DEFAULT 0, fiscale_desk INTEGER DEFAULT 0, metodo_pagamento TEXT, stato TEXT DEFAULT 'In Lavorazione', sede TEXT, is_approx_date INTEGER DEFAULT 0)''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS dettagli_ordine (id INTEGER PRIMARY KEY AUTOINCREMENT, ordine_id INTEGER, capo TEXT, prezzo REAL, ritirato INTEGER DEFAULT 0, stato_lavorazione INTEGER DEFAULT 0, numero_catena TEXT DEFAULT '')''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
+    # Aggiornamenti Schema
     try: cursor.execute("SELECT ordine FROM listino LIMIT 1")
     except: cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0"); cursor.execute("UPDATE listino SET ordine = id")
         
@@ -87,6 +90,9 @@ def init_db():
 
     try: cursor.execute("SELECT codice_lotteria FROM clienti LIMIT 1")
     except: cursor.execute("ALTER TABLE clienti ADD COLUMN codice_lotteria TEXT DEFAULT ''")
+
+    try: cursor.execute("SELECT pagamenti_parziali FROM ordini LIMIT 1")
+    except: cursor.execute("ALTER TABLE ordini ADD COLUMN pagamenti_parziali REAL DEFAULT 0")
 
     conn.commit()
 
@@ -329,21 +335,16 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
             
             residuo = max(0, totale - acconto)
             
-            if residuo > 0.01 and not pagato:
-                buffer += S_WIDE + b"DA PAGARE\n" + S_NORM + ALIGN_LEFT
-            else:
-                buffer += S_NORM + ALIGN_LEFT
+            if acconto > 0 and residuo > 0.01:
+                buffer += S_NORM + ALIGN_LEFT + enc(f"ACCONTO: {acconto:.2f}") + EURO + b"\n"
+                buffer += S_WIDE + ALIGN_CENTER + b"DA SALDARE:\n"
+                buffer += S_TOT + BOLD_ON + enc(f"{residuo:.2f}") + EURO + b"\n" + BOLD_OFF + S_NORM + ALIGN_LEFT
             
-            if acconto > 0:
-                if residuo > 0.01 and not pagato: 
-                    buffer += ALIGN_CENTER + S_WIDE + enc(f"DA SALDARE: {residuo:.2f}") + EURO + b"\n" + S_NORM + ALIGN_LEFT
-                else: 
-                    buffer += ALIGN_CENTER + S_WIDE + b"PAGATO\n" + S_NORM + ALIGN_LEFT
-            else:
-                if pagato: 
-                    buffer += ALIGN_CENTER + S_WIDE + b"PAGATO\n" + S_NORM + ALIGN_LEFT
-                else:
-                    pass
+            elif residuo > 0.01 and acconto <= 0:
+                buffer += S_WIDE + ALIGN_LEFT + b"DA PAGARE\n" + S_NORM
+            
+            elif residuo <= 0.01:
+                buffer += ALIGN_CENTER + S_WIDE + b"PAGATO\n" + S_NORM + ALIGN_LEFT
             
             buffer += b"\n" + ALIGN_CENTER + S_NORM + BOLD_ON + enc(f"{stringa_data_ritiro_stampa}\n") + BOLD_OFF
             buffer += ALIGN_CENTER + S_FOOT
@@ -358,22 +359,25 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
 
 def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
     stampante = get_setting("printer_star")
+    # MODIFICA: Usiamo un font enorme solo per il numero
     S_HUGE = get_star_font("huge")
+    S_BIG = get_star_font("big")
     
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("Riepilogo", None, "RAW")); win32print.StartPagePrinter(hPrinter)
-            ALIGN_CENTER = b'\x1b\x1d\x61\x01'; ALIGN_LEFT = b'\x1b\x1d\x61\x00'
+            ALIGN_CENTER = b'\x1b\x1d\x61\x01'
             BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_CP858 = b'\x1b\x1d\x74\x04'
             def enc(txt): return txt.encode('cp858', errors='replace')
             
             buffer = b'\x1b@' + CMD_CP858 
             buffer += ALIGN_CENTER 
             buffer += b"\n"
-            buffer += S_HUGE + BOLD_ON + enc(f"ORDINE {num_visibile}\n") + BOLD_OFF
+            # MODIFICA RICHIESTA: Via la parola "ORDINE", solo il numero gigante
+            buffer += S_HUGE + BOLD_ON + enc(f"{num_visibile}\n") + BOLD_OFF
             buffer += b"\n"
-            buffer += S_HUGE + enc(f"{cliente_nome[:20].upper()}\n")
+            buffer += S_BIG + enc(f"{cliente_nome[:20].upper()}\n")
             buffer += b"\n"
             
             buffer += b"\n\n\n\n\n" + CUT
@@ -404,7 +408,7 @@ def formatta_scontrino_whatsapp(nome_cliente, num_scontrino, carrello, totale, a
         text += f"Acconto: € {acconto:.2f}\n"
         residuo = max(0, totale - acconto)
         if residuo > 0:
-            text += f"*DA PAGARE: € {residuo:.2f}*\n"
+            text += f"*DA SALDARE: € {residuo:.2f}*\n"
         else:
             text += "*PAGATO* ✅\n"
     else:
@@ -412,6 +416,27 @@ def formatta_scontrino_whatsapp(nome_cliente, num_scontrino, carrello, totale, a
          
     text += "\nGrazie e arrivederci!"
     return urllib.parse.quote(text)
+
+# --- HELPER PER GESTIONE RANGE CATENA ---
+def parse_catena_range(catena_str):
+    numeri = set()
+    catena_str = str(catena_str).strip()
+    if not catena_str: return numeri
+    
+    try:
+        if '-' in catena_str:
+            parts = catena_str.split('-')
+            if len(parts) == 2:
+                start, end = int(parts[0]), int(parts[1])
+                if start > end: start, end = end, start
+                for i in range(start, end + 1):
+                    numeri.add(i)
+        else:
+            numeri.add(int(catena_str))
+    except ValueError:
+        pass 
+        
+    return numeri
 
 # --- ROTTE API ---
 @app.route('/')
@@ -547,7 +572,9 @@ def modifica_cliente():
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
     q = request.args.get('q', ''); cliente_id = request.args.get('cliente_id', ''); conn = get_db(); cursor = conn.cursor()
-    sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
+    
+    sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagamenti_parziali, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
+    
     conditions = []
     if cliente_id: conditions.append(f"o.cliente_id = {cliente_id}")
     elif q.isdigit(): conditions.append(f"o.num_scontrino = {q}")
@@ -555,19 +582,32 @@ def cerca_ordini_aperti():
         if not q and not cliente_id: conditions.append("1=0") 
     if conditions: sql += " AND " + " AND ".join(conditions)
     sql += " ORDER BY o.id DESC"; cursor.execute(sql); items = []
-    for row in cursor.fetchall(): d = dict(row); d['cliente_nome'] = f"{d['nome']} {d['cognome'] or ''}".strip(); d['residuo'] = max(0, d['totale'] - (d['acconto'] or 0)); d['tutto_pronto'] = (d['non_pronti'] == 0); items.append(d)
+    
+    for row in cursor.fetchall(): 
+        d = dict(row)
+        d['cliente_nome'] = f"{d['nome']} {d['cognome'] or ''}".strip()
+        d['residuo'] = max(0, d['totale'] - (d['acconto'] or 0) - (d['pagamenti_parziali'] or 0))
+        d['tutto_pronto'] = (d['non_pronti'] == 0)
+        items.append(d)
+        
     conn.close(); return jsonify(items)
 
 @app.route('/get_dettagli_ordine/<int:ordine_id>')
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk, pagato FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone()
+    cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk, pagato, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone()
+    
     totale = res[0]
     pagato = res[4]
-    acconto = res[1]
-    if pagato == 1: totale_versato = totale
-    else: totale_versato = acconto
-    info = {'totale_ordine': totale, 'totale_versato': totale_versato, 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': pagato}
+    acconto = res[1] or 0
+    pagamenti_parziali = res[5] or 0 
+    
+    if pagato == 1: 
+        totale_versato = totale
+    else: 
+        totale_versato = acconto + pagamenti_parziali 
+        
+    info = {'totale_ordine': totale, 'totale_versato': totale_versato, 'acconto': acconto, 'pagamenti_parziali': pagamenti_parziali, 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': pagato}
     cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
 
@@ -588,12 +628,21 @@ def consegna_items():
     msg = "Nessuna stampa."
     if ordine_id:
         if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
-        if incasso > 0: 
-            if metodo: cursor.execute("UPDATE ordini SET acconto = acconto + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
-            else: cursor.execute("UPDATE ordini SET acconto = acconto + ? WHERE id = ?", (incasso, ordine_id))
         
-        cursor.execute("SELECT totale, acconto FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
-        if r['acconto'] >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
+        if incasso > 0: 
+            if metodo: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
+            else: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ? WHERE id = ?", (incasso, ordine_id))
+        
+        cursor.execute("SELECT totale, acconto, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
+        totale_pagato = (r['acconto'] or 0) + (r['pagamenti_parziali'] or 0)
+        
+        # MODIFICA RICHIESTA: Se c'è acconto, lo scontrino fiscale deve essere per l'intero importo dei capi ritirati
+        has_acconto = (r['acconto'] and r['acconto'] > 0)
+        valore_totale_capi_selezionati = sum(item['prezzo'] for item in capi_ritirati)
+
+        if totale_pagato >= r['totale'] - 0.01: 
+            cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
+            
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
         if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
         
@@ -602,9 +651,21 @@ def consegna_items():
             cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,))
             res_cli = cursor.fetchone()
             cod_lotteria = res_cli[0] if res_cli else ""
-            item_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
-            if incasso > 0:
-                success = stampa_fiscale_vendita(item_fiscale, incasso, cod_lotteria)
+            
+            # LOGICA FISCALE MODIFICATA
+            # Se c'è un acconto, stampiamo l'intero valore dei capi (così lo scontrino è valido per il totale)
+            # Se NON c'è acconto, stampiamo solo l'incasso reale (il saldo)
+            
+            importo_da_fiscale = incasso
+            items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+            
+            if has_acconto:
+                 importo_da_fiscale = valore_totale_capi_selezionati
+                 # Passiamo i capi reali per la descrizione dettagliata se possibile, o un generico con il totale pieno
+                 items_da_fiscale = capi_ritirati
+
+            if importo_da_fiscale > 0:
+                success = stampa_fiscale_vendita(items_da_fiscale, importo_da_fiscale, cod_lotteria)
                 if success: msg = "✅ Scontrino Fiscale Stampato!"
                 else: msg = "❌ Errore Stampa Fiscale!"
             else: msg = "Importo 0, niente scontrino."
@@ -677,7 +738,6 @@ def salva_ordine():
             item_acconto = [{'nome': 'Acconto Lavanderia', 'prezzo': acconto}]
             stampa_fiscale_vendita(item_acconto, acconto, codice_lotteria)
 
-    # --- LOGICA STAMPA CORTESIA / WHATSAPP ---
     msg_wa = "Nessun invio"
     
     if not solo_prodotti:
@@ -686,7 +746,6 @@ def salva_ordine():
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
         
         elif azione == 'whatsapp':
-            # 1. Recupera telefono
             conn = get_db(); cursor = conn.cursor()
             cursor.execute("SELECT telefono FROM clienti WHERE id = ?", (d['cliente_id'],))
             res_tel = cursor.fetchone()
@@ -695,7 +754,6 @@ def salva_ordine():
             telefono = res_tel['telefono'] if res_tel else ""
             
             if len(telefono) > 5:
-                # 2. Prepara e salva file per il bot
                 testo_msg = formatta_scontrino_whatsapp(d['cliente_nome'], nuovo_num, carrello, totale, acconto, data_ritiro_str)
                 nome_file_json = f"ord_{oid}.json"
                 path_json = os.path.join(PATH_WA_OUT, nome_file_json)
@@ -707,7 +765,6 @@ def salva_ordine():
 
                 with open(path_json, 'w', encoding='utf-8') as f: json.dump(dati_bot, f)
                 
-                # 3. Polling attesa risposta (Max 10s)
                 esito_path = os.path.join(PATH_WA_ESITI, f"ord_{oid}.txt")
                 attesa = 0
                 msg_wa = "⏳ Timeout WhatsApp"
@@ -723,7 +780,6 @@ def salva_ordine():
             else:
                 msg_wa = "❌ Cliente senza telefono!"
             
-            # Stampa comunque etichette
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
 
         elif azione == 'email':
@@ -777,18 +833,53 @@ def get_items_scontrino():
 
 @app.route('/conferma_pronti', methods=['POST'])
 def conferma_pronti():
-    ids = request.json.get('ids', []); oid = request.json.get('ordine_id'); catena = request.json.get('catena', ''); conn = get_db(); cursor = conn.cursor()
-    if catena and ids:
-        placeholders = ','.join(['?']*len(ids)); cursor.execute(f"SELECT DISTINCT tipo_stoccaggio FROM dettagli_ordine WHERE id IN ({placeholders})", ids); types = [row[0] for row in cursor.fetchall()]
-        for t in types:
-            cursor.execute("SELECT o.num_scontrino FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE d.numero_catena = ? AND d.tipo_stoccaggio = ? AND d.ritirato = 0 AND d.ordine_id != ? LIMIT 1", (catena, t, oid))
-            conflict = cursor.fetchone()
-            if conflict: conn.close(); return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena} ({t}) OCCUPATA dall'ordine #{conflict[0]}!"})
+    ids = request.json.get('ids', [])
+    oid = request.json.get('ordine_id')
+    catena_input = request.json.get('catena', '').strip()
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if catena_input and ids:
+        nuovi_numeri = parse_catena_range(catena_input)
+        if not nuovi_numeri:
+            pass 
+        else:
+            placeholders = ','.join(['?']*len(ids))
+            cursor.execute(f"SELECT DISTINCT tipo_stoccaggio FROM dettagli_ordine WHERE id IN ({placeholders})", ids)
+            types = [row[0] for row in cursor.fetchall()]
+            
+            for t in types:
+                cursor.execute("""
+                    SELECT DISTINCT d.numero_catena, o.num_scontrino 
+                    FROM dettagli_ordine d 
+                    JOIN ordini o ON d.ordine_id = o.id 
+                    WHERE d.tipo_stoccaggio = ? 
+                      AND d.ritirato = 0 
+                      AND d.ordine_id != ? 
+                      AND d.numero_catena != ''
+                """, (t, oid))
+                
+                rows = cursor.fetchall()
+                for row in rows:
+                    catena_db = row['numero_catena']
+                    num_scontrino = row['num_scontrino']
+                    
+                    numeri_esistenti = parse_catena_range(catena_db)
+                    
+                    if not nuovi_numeri.isdisjoint(numeri_esistenti):
+                          conn.close()
+                          return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena_input} OCCUPATA (Conflitto con {catena_db} - Ordine #{num_scontrino})!"})
+
     if ids:
-        pl = ','.join(['?']*len(ids)); 
-        cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena] + ids)
-    else: cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
-    conn.commit(); conn.close(); return jsonify({'status': 'success'})
+        pl = ','.join(['?']*len(ids))
+        cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena_input] + ids)
+    else: 
+        cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
+    
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success'})
 
 @app.route('/api/stampa_riepilogo', methods=['POST'])
 def api_stampa_riepilogo():
@@ -864,15 +955,12 @@ def toggle_stato_pagamento():
     res = cursor.fetchone()
     if res:
         currentState = res['pagato']
-        # Se è pagato (1) -> Diventa da pagare (0)
-        # MODIFICA: Calcoliamo il valore dei capi GIA ritirati per non farli pagare due volte
         if currentState == 1:
             nuovo_stato = 0
             cursor.execute("SELECT SUM(prezzo) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 1", (oid,))
             valore_ritirati = cursor.fetchone()[0] or 0.0
-            nuovo_acconto = valore_ritirati # L'acconto diventa pari a ciò che è uscito
+            nuovo_acconto = valore_ritirati 
         else:
-            # Se è da pagare (0) -> Diventa pagato (1)
             nuovo_stato = 1
             nuovo_acconto = res['totale']
 
@@ -957,10 +1045,7 @@ def api_get_stats():
     
     conn = get_db(); cursor = conn.cursor()
     
-    # 1. Raccolta Dati Giornalieri per il Grafico Multiline
     daily_stats = defaultdict(lambda: {'items': 0, 'revenue': 0.0, 'fiscal': 0})
-
-    # 1.a Capi Entrati per Giorno
     cursor.execute("""
         SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi 
         FROM ordini o 
@@ -971,7 +1056,6 @@ def api_get_stats():
     for r in cursor.fetchall():
         daily_stats[r['data']]['items'] = r['tot_capi']
 
-    # 1.b Incassi (Totale Ordini) per Giorno e Scontrini Fiscali Emessi
     cursor.execute("""
         SELECT date(data_ingresso) as data, SUM(totale) as tot_incasso, SUM(CASE WHEN fiscale_emesso = 1 THEN 1 ELSE 0 END) as tot_fiscali
         FROM ordini
@@ -982,7 +1066,6 @@ def api_get_stats():
         daily_stats[r['data']]['revenue'] = r['tot_incasso'] if r['tot_incasso'] else 0.0
         daily_stats[r['data']]['fiscal'] = r['tot_fiscali'] if r['tot_fiscali'] else 0
 
-    # Convertiamo in lista ordinata per il frontend
     trend_daily = []
     sorted_dates = sorted(daily_stats.keys())
     for d in sorted_dates:
@@ -993,7 +1076,6 @@ def api_get_stats():
             'fiscal': daily_stats[d]['fiscal']
         })
 
-    # 2. Top Items (Capi più portati nel periodo)
     cursor.execute("""
         SELECT d.capo, count(d.id) as qty 
         FROM dettagli_ordine d 
@@ -1005,21 +1087,15 @@ def api_get_stats():
     """, (start_date, end_date_raw))
     top_items = [dict(row) for row in cursor.fetchall()]
     
-    # 3. Aggregati Generali (per i box di testo)
-    
-    # 3a. Conteggio Scontrini Fiscali
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
     fiscal_count = cursor.fetchone()[0]
 
-    # 3b. Totale Valore Scontrini Fiscali (RICHIESTO)
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
     fiscal_value = cursor.fetchone()[0] or 0.0
 
-    # 3c. Totale Incasso Globale
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
     total_revenue = cursor.fetchone()[0] or 0.0
 
-    # 3d. Totale Capi Entrati nel Periodo
     cursor.execute("""
         SELECT COUNT(d.id) 
         FROM dettagli_ordine d 
@@ -1028,8 +1104,6 @@ def api_get_stats():
     """, (start_date, end_date_raw))
     capi_entrati_period = cursor.fetchone()[0] or 0
 
-    # 3e. Top Clienti (MODIFICATA PER CONTARE I CAPI)
-    # Usiamo una subquery per contare i capi specifici di quel cliente nel periodo, evitando duplicazioni sulla somma totale
     params_clients = (start_date, end_date_raw, start_date, end_date_raw)
     cursor.execute("""
         SELECT c.nome, c.cognome, SUM(o.totale) as total_spent,
@@ -1042,7 +1116,6 @@ def api_get_stats():
     """, params_clients)
     top_clients = [dict(row) for row in cursor.fetchall()]
 
-    # 3f. Capi Ritirati e Totali (Globali del periodo)
     cursor.execute("""
         SELECT SUM(CASE WHEN d.ritirato = 1 THEN 1 ELSE 0 END) as ritirati
         FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id
@@ -1067,7 +1140,6 @@ def api_get_stats():
     """, (start_date, end_date_raw))
     scontrini_prodotti = cursor.fetchone()[0]
 
-    # 4. DETTAGLIO CAPI RITIRATI PER CLIENTE
     cursor.execute("""
         SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso
         FROM dettagli_ordine d

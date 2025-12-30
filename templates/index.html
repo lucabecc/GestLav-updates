@@ -411,7 +411,7 @@
             <div class="mb-3 text-center">
                 <label class="form-label fw-bold text-muted">NUMERO CATENA / POSIZIONE</label>
                 <input type="text" id="input-catena" class="form-control form-control-lg fw-bold text-center border-warning" style="font-size: 2rem; max-width: 300px; margin: auto;" placeholder="Es: 10" onkeydown="if(event.key === 'Enter') confermaPronti()">
-                <small class="text-muted">Scrivi il numero e premi INVIO</small>
+                <small class="text-muted">Scrivi il numero e premi INVIO (Es: 10, oppure 10-12)</small>
             </div>
             <ul id="lista-pronti" class="list-group mb-4"></ul>
             <button class="btn btn-success w-100 btn-lg fw-bold" onclick="confermaPronti()">✅ CONFERMA SELEZIONATI</button>
@@ -1271,7 +1271,25 @@
         if(tipo === 'capo') document.getElementById('input-pronti-capo').value = ''; 
         if(tipo === 'ordine') document.getElementById('input-pronti-scontrino').value = ''; 
     }
-    async function confermaPronti() { let ids = []; document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); const catena = document.getElementById('input-catena').value; const res = await fetch('/conferma_pronti', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})}); const data = await res.json(); if(data.status === 'error') { alert(data.msg); } else { alert("Stati aggiornati!"); vaiHome(); } }
+    async function confermaPronti() { 
+        let ids = []; document.querySelectorAll('.chk-pronto:checked').forEach(el => ids.push(el.value)); 
+        const catena = document.getElementById('input-catena').value; 
+        const res = await fetch('/conferma_pronti', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, ordine_id: ordineProntiId, catena: catena})}); 
+        const data = await res.json(); 
+        
+        if(data.status === 'error') { 
+            alert(data.msg); 
+        } else { 
+            alert("Stati aggiornati!"); 
+            // MODIFICA: Rimossa chiamata vaiHome(), pulizia campi
+            document.getElementById('input-pronti-scontrino').value = '';
+            document.getElementById('input-pronti-capo').value = '';
+            document.getElementById('input-catena').value = '';
+            document.getElementById('lista-pronti').innerHTML = '';
+            document.getElementById('box-lista-pronti').style.display = 'none';
+            document.getElementById('input-pronti-scontrino').focus();
+        } 
+    }
 
     async function stampaRiepilogoOrdine() {
         if(!ordineProntiId) return alert("Nessun ordine selezionato!");
