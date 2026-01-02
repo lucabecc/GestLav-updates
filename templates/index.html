@@ -180,8 +180,8 @@
     </div>
     <div class="card p-3 shadow-sm mb-3">
         <div class="row align-items-end g-2">
-            <div class="col-md-3"><label class="fw-bold">Dal:</label><input type="date" id="stats-start" class="form-control"></div>
-            <div class="col-md-3"><label class="fw-bold">Al:</label><input type="date" id="stats-end" class="form-control"></div>
+            <div class="col-md-2"><label class="fw-bold">Dal:</label><input type="date" id="stats-start" class="form-control"></div>
+            <div class="col-md-2"><label class="fw-bold">Al:</label><input type="date" id="stats-end" class="form-control"></div>
             <div class="col-md-2"><button class="btn btn-primary w-100 fw-bold" onclick="caricaStatistiche()">🔍 ANALIZZA</button></div>
         </div>
         <div class="mt-3 p-2 border rounded bg-light">
@@ -232,7 +232,21 @@
     <div style="height: 100px;"></div>
 </div>
 
-<div class="modal fade" id="modalRitirati" tabindex="-1"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><div class="modal-header bg-warning"><h5 class="modal-title fw-bold">📦 Dettaglio Capi Ritirati</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body" id="body-ritirati"></div></div></div></div>
+<div class="modal fade" id="modalRitirati" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title fw-bold">📦 Dettaglio Capi Ritirati</h5>
+                <div class="input-group w-50 ms-3">
+                    <input type="text" id="stats-search-capo" class="form-control" placeholder="Filtra Capo (Es. Pantalone)..." onkeydown="if(event.key==='Enter') caricaStatistiche()">
+                    <button class="btn btn-dark" onclick="caricaStatistiche()"><i class="bi bi-search"></i></button>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="body-ritirati"></div>
+        </div>
+    </div>
+</div>
 
 <div class="container-fluid mt-3 hidden" id="view-ricezione">
     <div class="d-flex justify-content-between mb-2">
@@ -299,9 +313,9 @@
                 <div class="totale-box shadow-sm mt-3">Totale: € <span id="totale">0.00</span></div>
                 <div class="row g-2 mt-3" id="actions-panel">
                     <div class="col-12 mb-2"><button id="btn-sospendi" class="btn btn-warning w-100 fw-bold shadow-sm" onclick="sospendiOrdine()" disabled>🅿️ PAUSA</button></div>
-                    <div class="col-4"><button id="btn-stampa" class="btn btn-success w-100 btn-sm fw-bold shadow" onclick="salvaOrdine('stampa')" disabled>🖨️ STAMPA</button></div>
-                    <div class="col-4"><button id="btn-whatsapp" class="btn btn-success w-100 btn-sm fw-bold shadow" onclick="salvaOrdine('whatsapp')" disabled>📱 WHATSAPP</button></div>
-                    <div class="col-4"><button id="btn-email" class="btn btn-success w-100 btn-sm fw-bold shadow" onclick="salvaOrdine('email')" disabled>📧 EMAIL</button></div>
+                    <div class="col-6"><button id="btn-stampa" class="btn btn-success w-100 btn-lg fw-bold shadow" onclick="salvaOrdine('stampa')" disabled>🖨️ STAMPA</button></div>
+                    <div class="col-6"><button id="btn-whatsapp" class="btn btn-success w-100 btn-lg fw-bold shadow" onclick="salvaOrdine('whatsapp')" disabled>📱 WHATSAPP</button></div>
+                    <button id="btn-email" class="hidden" onclick="salvaOrdine('email')"></button>
                 </div>
             </div>
             <div id="btn-alert-ritiri" class="alert-glass-yellow" onclick="gestisciRitiroRapido()">🔔 CI SONO CAPI DA RITIRARE!<br><span style="font-size: 0.9rem; font-weight: normal;">Clicca qui per visualizzare</span></div>
@@ -319,7 +333,7 @@
             <ul id="suggerimenti-consegna" class="list-group position-absolute w-100 shadow" style="z-index:1000; top: 60px;"></ul>
         </div>
         <table class="table table-striped table-hover align-middle" id="table-consegna">
-            <thead class="table-dark"><tr><th># Scontrino</th><th>Data Ritiro</th><th>Cliente</th><th>Stato Lav.</th><th>Pagamento</th><th>Pos. Catena</th><th style="width: 250px;">Azioni</th></tr></thead>
+            <thead class="table-dark"><tr><th># Scontrino</th><th>Data Ingresso</th><th>Data Ritiro</th><th>Cliente</th><th>Stato Lav.</th><th>Pagamento</th><th>Pos. Catena</th><th style="width: 250px;">Azioni</th></tr></thead>
             <tbody id="tabella-ordini"></tbody>
         </table>
     </div>
@@ -424,7 +438,7 @@
 <div class="modal fade" id="modalSceltaOrdine" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">Scegli Ordine da Ritirare</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div id="lista-ordini-scelta" class="list-group"></div></div></div></div></div>
 <div class="modal fade" id="modalStorico" tabindex="-1"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><div class="modal-header bg-dark text-white"><h5 class="modal-title">📜 Storico Cliente (Completati)</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body"><p class="text-muted small">Visualizzazione dal più vecchio al più recente.</p><div id="contenuto-storico"></div></div></div></div></div>
 <div class="modal fade" id="modalAutoUpdate" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header bg-warning"><h5 class="modal-title fw-bold">🚀 Aggiornamento Disponibile!</h5></div><div class="modal-body"><p>Nuova versione rilevata.</p><div class="alert alert-info text-center">Versione Corrente: <strong><span id="ver-old"></span></strong><br>Nuova Versione: <strong><span id="ver-new"></span></strong></div><div id="spinner-update" class="text-center hidden"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div></div><div class="modal-footer justify-content-center"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No</button><button type="button" class="btn btn-success fw-bold px-4" id="btn-start-auto-update" onclick="performAutoUpdate()">AGGIORNA ORA</button></div></div></div></div>
-<div class="modal fade" id="modalConsegna" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">📦 Ritiro Capi - Ordine #<span id="cons-id"></span></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="d-flex justify-content-between align-items-center mb-3"><h4 id="cons-cliente" class="mb-0 text-primary fw-bold"></h4><button class="btn btn-outline-warning btn-sm fw-bold" id="btn-toggle-pay" onclick="toggleStatoPagamento()">Cambia Stato</button></div><div class="alert alert-light border p-3 mb-3"><div class="row align-items-center"><div class="col-md-6 text-center"><label class="fw-bold text-danger">SCONTO EXTRA (€)</label><input type="number" id="sconto-consegna" class="form-control form-control-lg text-center text-danger fw-bold border-danger" value="0" min="0" step="0.5" onchange="calcolaSaldoParziale()"></div><div class="col-md-6 text-center"><div class="fw-bold fs-3 text-primary">DA INCASSARE</div><div class="fw-bold fs-1" id="cons-residuo-parziale" data-val="0">€ 0.00</div></div></div></div><div class="d-flex justify-content-end mb-2"><button class="btn btn-outline-secondary btn-sm" onclick="toggleSelezionaTutto()">✅ Seleziona Tutto</button></div><div id="cons-lista" class="list-group mb-4"></div><div id="box-metodi-consegna" class="row g-2 mb-3" style="display:none;"><div class="col-6"><div class="pay-option pay-selected" id="opt-cons-contanti" onclick="selectMetodoConsegna('Contanti')">💶 CONTANTI</div></div><div class="col-6"><div class="pay-option" id="opt-cons-carta" onclick="selectMetodoConsegna('Carta')">💳 CARTA</div></div></div><div class="row g-2"><div class="col-6"><button id="btn-consegna-no-fisc" class="btn btn-secondary w-100 py-3 fw-bold" onclick="confermaConsegna(false)">📦 CONSEGNA (NO Scontrino)</button></div><div class="col-6"><button id="btn-consegna-fiscale" class="btn btn-success w-100 py-3 fw-bold" onclick="confermaConsegna(true)">🖨️ CONSEGNA + FISCALE</button></div></div></div></div></div></div>
+<div class="modal fade" id="modalConsegna" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-primary text-white"><h5 class="modal-title">📦 Ritiro Capi - Ordine #<span id="cons-id"></span></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="d-flex justify-content-between align-items-center mb-3"><h4 id="cons-cliente" class="mb-0 text-primary fw-bold"></h4><button class="btn btn-outline-warning btn-sm fw-bold" id="btn-toggle-pay" onclick="toggleStatoPagamento()">Cambia Stato</button></div><div id="cons-data-ritiro" class="fw-bold text-muted mb-2"></div><div class="alert alert-light border p-3 mb-3"><div class="row align-items-center"><div class="col-md-6 text-center"><label class="fw-bold text-danger">SCONTO EXTRA (€)</label><input type="number" id="sconto-consegna" class="form-control form-control-lg text-center text-danger fw-bold border-danger" value="0" min="0" step="0.5" onchange="calcolaSaldoParziale()"></div><div class="col-md-6 text-center"><div class="fw-bold fs-3 text-primary">DA INCASSARE</div><div class="fw-bold fs-1" id="cons-residuo-parziale" data-val="0">€ 0.00</div></div></div></div><div class="d-flex justify-content-end mb-2"><button class="btn btn-outline-secondary btn-sm" onclick="toggleSelezionaTutto()">✅ Seleziona Tutto</button></div><div id="cons-lista" class="list-group mb-4"></div><div id="box-metodi-consegna" class="row g-2 mb-3" style="display:none;"><div class="col-6"><div class="pay-option pay-selected" id="opt-cons-contanti" onclick="selectMetodoConsegna('Contanti')">💶 CONTANTI</div></div><div class="col-6"><div class="pay-option" id="opt-cons-carta" onclick="selectMetodoConsegna('Carta')">💳 CARTA</div></div></div><div class="row g-2"><div class="col-6"><button id="btn-consegna-no-fisc" class="btn btn-secondary w-100 py-3 fw-bold" onclick="confermaConsegna(false)">📦 CONSEGNA (NO Scontrino)</button></div><div class="col-6"><button id="btn-consegna-fiscale" class="btn btn-success w-100 py-3 fw-bold" onclick="confermaConsegna(true)">🖨️ CONSEGNA + FISCALE</button></div></div></div></div></div></div>
 <div class="modal fade" id="modalEditConsegna" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content"><div class="modal-header bg-warning"><h5 class="modal-title">Modifica Capo</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="edit-id-capo"><label>Nome</label><input type="text" id="edit-nome-capo" class="form-control mb-2" onkeydown="if(event.key==='Enter') salvaModificaCapo()"><label>Prezzo</label><input type="number" id="edit-prezzo-capo" class="form-control mb-3" step="0.50" onkeydown="if(event.key==='Enter') salvaModificaCapo()"><button class="btn btn-primary w-100" onclick="salvaModificaCapo()">Salva</button></div></div></div></div>
 <div class="modal fade" id="modalImpostazioni" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header bg-secondary text-white"><h5 class="modal-title">Impostazioni</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><ul class="nav nav-pills mb-3" id="pills-tab-settings" role="tablist"><li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pills-listino">🏷️ Listino Prezzi</button></li><li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#pills-hardware">🖨️ Stampanti & Hardware</button></li><li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#pills-general">⚙️ Generali</button></li></ul><div class="tab-content"><div class="tab-pane fade show active" id="pills-listino"><div class="d-flex justify-content-between mb-3"><select id="filtro-categoria" class="form-select w-50" onchange="caricaListinoTabella()"></select><button class="btn btn-success" onclick="apriModalAggiungiCapo()">+ Aggiungi Capo</button></div><div style="height: 300px; overflow-y: auto;"><table class="table table-striped table-hover"><thead class="table-dark"><tr><th>Ord.</th><th>Capo</th><th>Tipo</th><th>Prezzo</th><th>Azioni</th></tr></thead><tbody id="tabella-listino"></tbody></table></div></div><div class="tab-pane fade" id="pills-hardware"><div class="mb-3"><label>Stampante Scontrini (Nome Windows)</label><select id="conf-star" class="form-select"></select></div><div class="mb-3"><label>Porta Etichette / Stampante</label><input class="form-control" list="list-printers-labels" id="conf-labels" placeholder="Scrivi COM1 oppure seleziona..."><datalist id="list-printers-labels"></datalist><small class="text-muted">Usa "COMx" per vecchie seriali, oppure seleziona il nome Windows.</small></div><div class="mb-3"><label>IP Stampante Fiscale</label><input type="text" id="conf-ip" class="form-control"></div><hr><h5 class="text-primary"><i class="bi bi-receipt"></i> Personalizzazione Scontrino</h5><div class="card p-3 bg-light mb-3"><div class="mb-2"><label class="fw-bold">Intestazione (Header)</label><textarea id="conf-header" class="form-control" rows="3"></textarea><select id="conf-size-header" class="form-select mt-1"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="row g-2 mb-2"><div class="col-4"><label class="small fw-bold">Num. Scontrino</label><select id="conf-size-num" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="col-4"><label class="small fw-bold">Nome Cliente</label><select id="conf-size-cust" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="col-4"><label class="small fw-bold">Lista Capi</label><select id="conf-size-item" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div></div><div class="row g-2 mb-2"><div class="col-6"><label class="small fw-bold">Totale €</label><select id="conf-size-total" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div></div><div class="mb-2"><label class="fw-bold">Piè di pagina (Footer)</label><textarea id="conf-footer" class="form-control" rows="2"></textarea><select id="conf-size-footer" class="form-select mt-1"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="conf-print-logo"><label class="form-check-label fw-bold">Stampa Logo (NVRAM)</label></div><button class="btn btn-outline-primary w-100 mt-2" onclick="testStampa('scontrino')">🖨️ TEST SCONTRINO</button></div><h5 class="text-primary"><i class="bi bi-tags-fill"></i> Personalizzazione Etichette</h5><div class="card p-3 bg-light"><div class="mb-2"><label class="fw-bold">Testo Personalizzato (Sede)</label><input type="text" id="conf-label-text" class="form-control"></div><div class="row g-2"><div class="col-6 mb-2"><label class="small fw-bold">Riga 1 (Ord/ID)</label><select id="conf-font-row1" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="col-6 mb-2"><label class="small fw-bold">Riga 2 (Cliente)</label><select id="conf-font-row2" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="col-6 mb-2"><label class="small fw-bold">Riga 3 (Capo)</label><select id="conf-font-row3" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div><div class="col-6 mb-2"><label class="small fw-bold">Riga 4 (Data)</label><select id="conf-font-row4" class="form-select form-select-sm"><option value="norm">Normale</option><option value="high">Alto</option><option value="wide">Largo</option><option value="big">Gigante</option><option value="huge">Super Gigante</option></select></div></div><div class="mt-2"><label class="fw-bold">Avanzamento Finale (Feed)</label><div class="input-group"><input type="number" id="conf-label-feed" class="form-control" value="12" min="0" max="30"><span class="input-group-text">Righe</span></div><small class="text-muted">Aumenta se taglia l'ultima riga.</small></div><button class="btn btn-outline-warning w-100 mt-2" onclick="testStampa('etichetta')">🏷️ TEST ETICHETTA</button></div></div><div class="tab-pane fade" id="pills-general"><div class="alert alert-info"><h5 class="fw-bold"><i class="bi bi-cloud-arrow-down-fill"></i> Aggiornamento Software</h5><p id="update-msg" class="mb-2">Verifica disponibilità aggiornamenti online.</p><button class="btn btn-primary w-100" id="btn-check-update" onclick="checkUpdate()">☁️ CERCA AGGIORNAMENTI</button><button class="btn btn-success w-100 mt-2 hidden" id="btn-do-update" onclick="performUpdate()">SCARICA E AGGIORNA</button><button class="btn btn-danger w-100 mt-2" id="btn-restore" onclick="restoreBackup()" style="display:none;">↩️ RIPRISTINA VERSIONE PRECEDENTE</button></div><hr><div class="form-check form-switch mb-4"><input class="form-check-input" type="checkbox" id="conf-fiscal-always"><label class="form-check-label fw-bold">Stampa Fiscale SEMPRE (in ricezione)</label></div><hr><div class="card p-3 border-danger mt-3 bg-light"><h6 class="text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> ELIMINA ORDINE INTERO</h6><label class="mb-2">Cancella definitivamente tutto l'ordine:</label><div class="input-group"><input type="number" id="del-num-ordine" class="form-control" placeholder="N. Scontrino"><button class="btn btn-danger fw-bold" onclick="eliminaOrdineDefinitivo()">ELIMINA ORDINE</button></div></div><div class="card p-3 border-danger mt-3 bg-light"><h6 class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ELIMINA SINGOLO CAPO</h6><label class="mb-2">Cancella un solo capo specifico (Codice ID):</label><div class="input-group"><input type="number" id="del-id-capo" class="form-control" placeholder="Codice Capo (es. 45)"><button class="btn btn-danger fw-bold" onclick="eliminaCapoDefinitivo()">ELIMINA CAPO</button></div></div><hr><div class="alert alert-warning mt-3"><i class="bi bi-info-circle"></i> Reset contatore giornaliero:</div><button class="btn btn-warning w-100" onclick="resetContatori()">AZZERA NUMERAZIONE SCONTRINI</button></div></div></div><div class="modal-footer"><button class="btn btn-primary w-100" onclick="salvaImpostazioni()">💾 SALVA TUTTO</button></div></div></div></div>
 <div class="modal fade" id="modalCapo" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header bg-info text-white"><h5 class="modal-title">Gestione Capo</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="edit-listino-id"><label>Categoria</label><input class="form-control mb-2" list="datalistCategorie" id="edit-listino-cat" placeholder="Seleziona o scrivi nuova..."><datalist id="datalistCategorie"></datalist><label>Nome Capo</label><input type="text" id="edit-listino-nome" class="form-control mb-2"><label>Prezzo</label><input type="number" id="edit-listino-prezzo" class="form-control" step="0.50"><label>Posizione Default (Nastro/Scaffale)</label><select id="edit-listino-tipo" class="form-select"><option value="Nastro">🔄 Nastro</option><option value="Scaffale">📦 Scaffale</option></select></div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" onclick="salvaCapoListino()">Salva</button></div></div></div></div>
@@ -654,7 +668,8 @@
 
     async function caricaStatistiche() {
         const start = document.getElementById('stats-start').value; const end = document.getElementById('stats-end').value;
-        try { const res = await fetch(`/api/get_stats?start=${start}&end=${end}`); const data = await res.json(); aggiornaGraficoTrend(data.trend_daily); aggiornaGraficoItems(data.top_items); currentRitiratiData = data.ritirati_dettaglio; const s = data.stats; 
+        const qCapo = document.getElementById('stats-search-capo').value; // Nuovo campo ricerca
+        try { const res = await fetch(`/api/get_stats?start=${start}&end=${end}&search_capo=${qCapo}`); const data = await res.json(); aggiornaGraficoTrend(data.trend_daily); aggiornaGraficoItems(data.top_items); currentRitiratiData = data.ritirati_dettaglio; const s = data.stats; 
         
         // Aggiornamento Dati Correnti
         document.getElementById('rep-fiscale-count').innerText = s.fiscal_count; 
@@ -670,12 +685,18 @@
         document.getElementById('rep-capi-entrati-prev').innerText = `Anno sc.: ${s.prev_capi_totali}`;
 
         const tbody = document.getElementById('table-top-clients'); tbody.innerHTML = ''; s.top_clients.forEach(c => { tbody.innerHTML += `<tr><td>${c.nome} ${c.cognome || ''}</td><td class="text-end"><span class="badge bg-light text-dark border me-2">${c.total_items} Capi</span><strong>€ ${c.total_spent.toFixed(2)}</strong></td></tr>`; }); aggiornaVisibilitaReport();
+        
+        // Se il modale ritirati è aperto, aggiorno la lista
+        if(document.getElementById('modalRitirati').classList.contains('show')) {
+            apriDettaglioRitirati();
+        }
+
         } catch(e) { console.error("Errore statistiche:", e); }
     }
     
     function apriDettaglioRitirati() {
         const body = document.getElementById('body-ritirati'); body.innerHTML = '';
-        if(currentRitiratiData.length === 0) { body.innerHTML = '<div class="alert alert-info">Nessun capo ritirato nel periodo selezionato.</div>'; } else {
+        if(currentRitiratiData.length === 0) { body.innerHTML = '<div class="alert alert-info">Nessun capo ritirato (o trovato con il filtro) nel periodo selezionato.</div>'; } else {
             let html = '<div class="accordion" id="accRitirati">';
             currentRitiratiData.forEach((cliente, idx) => {
                 let itemsHtml = '<ul class="list-group list-group-flush">';
@@ -684,11 +705,29 @@
             });
             html += '</div>'; body.innerHTML = html;
         }
-        new bootstrap.Modal(document.getElementById('modalRitirati')).show();
+        // Mostro il modale solo se non è già aperto (per evitare sfarfallii in ricerca)
+        if(!document.getElementById('modalRitirati').classList.contains('show')) {
+             new bootstrap.Modal(document.getElementById('modalRitirati')).show();
+        }
     }
 
-    function aggiornaVisibilitaReport() { if(chartTrend) { chartTrend.setDatasetVisibility(0, document.getElementById('chk-capi').checked); chartTrend.setDatasetVisibility(1, document.getElementById('chk-incassi').checked); chartTrend.setDatasetVisibility(2, document.getElementById('chk-fiscali').checked); chartTrend.update(); } }
-    function toggleDataset(index) { if(chartTrend) { const meta = chartTrend.getDatasetMeta(index); meta.hidden = meta.hidden === null ? !chartTrend.data.datasets[index].hidden : null; chartTrend.update(); } }
+    function aggiornaVisibilitaReport() { 
+        if(chartTrend) { 
+            toggleDataset(0); 
+            toggleDataset(1); 
+            toggleDataset(2); 
+        } 
+    }
+    
+    // FUNZIONE TOGGLE CHART CORRETTA
+    function toggleDataset(index) { 
+        const chkId = index === 0 ? 'chk-capi' : index === 1 ? 'chk-incassi' : 'chk-fiscali';
+        const isChecked = document.getElementById(chkId).checked;
+        if (chartTrend) { 
+            chartTrend.setDatasetVisibility(index, isChecked);
+            chartTrend.update();
+        } 
+    }
     
     function aggiornaGraficoTrend(data) {
         const ctx = document.getElementById('chart-trend').getContext('2d'); if (chartTrend) chartTrend.destroy();
@@ -715,25 +754,27 @@
     function evidenziaAzionePreferita(azione) {
         document.getElementById('btn-stampa').classList.remove('btn-warning'); document.getElementById('btn-stampa').classList.add('btn-success');
         document.getElementById('btn-whatsapp').classList.remove('btn-warning'); document.getElementById('btn-whatsapp').classList.add('btn-success');
-        document.getElementById('btn-email').classList.remove('btn-warning'); document.getElementById('btn-email').classList.add('btn-success');
+        // Email rimossa dalla UI, ma manteniamo logica per sicurezza
+        if(document.getElementById('btn-email')) {
+             document.getElementById('btn-email').classList.remove('btn-warning'); document.getElementById('btn-email').classList.add('btn-success');
+        }
         if(azione === 'stampa') { document.getElementById('btn-stampa').classList.remove('btn-success'); document.getElementById('btn-stampa').classList.add('btn-warning'); } 
         else if (azione === 'whatsapp') { document.getElementById('btn-whatsapp').classList.remove('btn-success'); document.getElementById('btn-whatsapp').classList.add('btn-warning'); } 
-        else if (azione === 'email') { document.getElementById('btn-email').classList.remove('btn-success'); document.getElementById('btn-email').classList.add('btn-warning'); }
     }
 
     async function gestisciRitiroRapido() {
         if(!clienteCorrente) return;
         const res = await fetch(`/cerca_ordini_aperti?cliente_id=${clienteCorrente.id}`); const ordini = await res.json();
         if(ordini.length === 0) return alert("Nessun ordine trovato.");
-        if(ordini.length === 1) { apriDettaglioConsegna(ordini[0].id, ordini[0].cliente_nome, ordini[0].num_scontrino); } 
+        if(ordini.length === 1) { apriDettaglioConsegna(ordini[0].id, ordini[0].cliente_nome, ordini[0].num_scontrino, ordini[0].data_ritiro); } 
         else {
             const div = document.getElementById('lista-ordini-scelta'); div.innerHTML = '';
-            ordini.forEach(o => { div.innerHTML += `<button class="list-group-item list-group-item-action" onclick="apriDaLista(${o.id}, '${o.cliente_nome}', ${o.num_scontrino})"><div class="d-flex w-100 justify-content-between"><h5 class="mb-1">Ordine #${o.num_scontrino}</h5><small>${o.data_ritiro}</small></div><p class="mb-1">Stato: ${o.tutto_pronto ? '🟢 PRONTO' : '🟡 IN LAVORAZIONE'}</p></button>`; });
+            ordini.forEach(o => { div.innerHTML += `<button class="list-group-item list-group-item-action" onclick="apriDaLista(${o.id}, '${o.cliente_nome}', ${o.num_scontrino}, '${o.data_ritiro}')"><div class="d-flex w-100 justify-content-between"><h5 class="mb-1">Ordine #${o.num_scontrino}</h5><small>${o.data_ritiro}</small></div><p class="mb-1">Stato: ${o.tutto_pronto ? '🟢 PRONTO' : '🟡 IN LAVORAZIONE'}</p></button>`; });
             if(!modalSceltaOrdineObj) modalSceltaOrdineObj = new bootstrap.Modal(document.getElementById('modalSceltaOrdine'));
             modalSceltaOrdineObj.show();
         }
     }
-    function apriDaLista(id, nome, num) { if(modalSceltaOrdineObj) modalSceltaOrdineObj.hide(); apriDettaglioConsegna(id, nome, num); }
+    function apriDaLista(id, nome, num, data) { if(modalSceltaOrdineObj) modalSceltaOrdineObj.hide(); apriDettaglioConsegna(id, nome, num, data); }
     function resetCliente() { 
         clienteCorrente = null; carrello = []; document.getElementById('qty-input').value = 1; aggiornaScontrino(); document.getElementById('cliente-selezionato').style.display = 'none'; document.getElementById('pannello-capi').style.opacity = '0.5'; document.getElementById('pannello-capi').style.pointerEvents = 'none'; document.getElementById('btn-alert-ritiri').style.display='none'; 
         const btnNuovo = document.getElementById('btn-nuovo-cliente'); btnNuovo.innerText = "➕ NUOVO CLIENTE"; btnNuovo.className = "btn btn-success w-100 btn-lg shadow-sm"; btnNuovo.setAttribute('onclick', 'apriModalNuovoCliente()');
@@ -757,7 +798,7 @@
     function aggiornaScontrino(ridisegna=true) { 
         if(ridisegna){ const div=document.getElementById('lista-carrello'); if(carrello.length===0) div.innerHTML='<p class="text-center mt-5 text-muted">Vuoto</p>'; else { let gruppi={}; carrello.forEach((x,i)=>{ if(!gruppi[x.nome])gruppi[x.nome]={count:0,tot:0}; gruppi[x.nome].count++; gruppi[x.nome].tot+=x.prezzo; }); let html=''; for(let n in gruppi){ let g=gruppi[n]; html+=`<div class="cart-group d-flex justify-content-between align-items-center" onclick="apriDettaglioGruppo('${n}')"><div><span class="badge-qty">${g.count}</span><span class="fw-bold">${n}</span></div><div class="fw-bold">€ ${g.tot.toFixed(2)}</div></div>`; } div.innerHTML=html; } } 
         let tot=0; carrello.forEach(x=>tot+=x.prezzo); let sc=parseFloat(document.getElementById('input-sconto').value)||0; let ac=parseFloat(document.getElementById('input-acconto').value)||0; let daPagare = Math.max(0, tot - sc - ac); document.getElementById('totale').innerText = daPagare.toFixed(2); 
-        let h=carrello.length>0; document.getElementById('btn-stampa').disabled=!h; document.getElementById('btn-whatsapp').disabled=!h; document.getElementById('btn-email').disabled=!h; document.getElementById('btn-sospendi').disabled=!h; 
+        let h=carrello.length>0; document.getElementById('btn-stampa').disabled=!h; document.getElementById('btn-whatsapp').disabled=!h; if(document.getElementById('btn-email')) document.getElementById('btn-email').disabled=!h; document.getElementById('btn-sospendi').disabled=!h; 
     }
     
     function apriDettaglioGruppo(n) { document.getElementById('titoloGruppo').innerText="Modifica: "+n; const div=document.getElementById('lista-dettaglio-gruppo'); div.innerHTML=''; carrello.forEach((x,i)=>{ if(x.nome===n) div.innerHTML+=`<div class="list-group-item"><div class="input-group"><span class="input-group-text">#${i+1}</span><input type="text" id="mod-nome-${i}" class="form-control fw-bold" value="${x.nome}" onkeydown="if(event.key==='Enter') salvaRiga(${i})"><input type="number" id="mod-prezzo-${i}" class="form-control input-mod-prezzo" value="${x.prezzo.toFixed(2)}" step="0.50" onkeydown="if(event.key==='Enter') salvaRiga(${i})"><button class="btn btn-success" onclick="salvaRiga(${i})"><i class="bi bi-check-lg"></i></button><button class="btn btn-outline-danger" onclick="rimuoviDaGruppo(${i},'${n}')"><i class="bi bi-trash"></i></button></div></div>`; }); if(!modalGruppo)modalGruppo=new bootstrap.Modal(document.getElementById('modalDettaglioGruppo')); modalGruppo.show(); }
@@ -803,7 +844,30 @@
     document.addEventListener('keydown', function(e) { if (e.key === 'F1') { e.preventDefault(); if (!document.getElementById('view-consegna').classList.contains('hidden') && currentDeliveryClientId) { apriStoricoCliente(currentDeliveryClientId); } } });
 
     async function apriStoricoCliente(clienteId) {
-        try { const res = await fetch(`/api/storico_cliente/${clienteId}`); const ordini = await res.json(); const div = document.getElementById('contenuto-storico'); div.innerHTML = ''; if (ordini.length === 0) { div.innerHTML = '<div class="alert alert-info">Nessun ordine completato nello storico per questo cliente.</div>'; } else { ordini.forEach(o => { let itemsHtml = ''; o.capi.forEach(c => { itemsHtml += `<span class="badge bg-secondary me-1 mb-1">${c.capo} (${c.prezzo.toFixed(2)}€)</span>`; }); div.innerHTML += `<div class="card mb-3 shadow-sm"><div class="card-header bg-light d-flex justify-content-between align-items-center"><span class="fw-bold">Ordine #${o.num_scontrino}</span><span class="text-muted small">Ingresso: ${new Date(o.data_ingresso).toLocaleDateString()}</span></div><div class="card-body"><div>${itemsHtml}</div><hr class="my-2"><div class="text-end fw-bold text-success">Totale: € ${o.totale.toFixed(2)}</div></div></div>`; }); } new bootstrap.Modal(document.getElementById('modalStorico')).show(); } catch (e) { alert("Errore caricamento storico."); }
+        try { const res = await fetch(`/api/storico_cliente/${clienteId}`); const ordini = await res.json(); const div = document.getElementById('contenuto-storico'); div.innerHTML = ''; if (ordini.length === 0) { div.innerHTML = '<div class="alert alert-info">Nessun ordine completato nello storico per questo cliente.</div>'; } else { ordini.forEach(o => { 
+            let dateEff = o.data_ritiro_effettivo ? `<br><small class="text-success fw-bold">Effettivo: ${o.data_ritiro_effettivo}</small>` : '';
+            let itemsHtml = ''; o.capi.forEach(c => { itemsHtml += `<span class="badge bg-secondary me-1 mb-1">${c.capo} (${c.prezzo.toFixed(2)}€)</span>`; }); 
+            
+            // AGGIUNTA COLONNA/VISUALIZZAZIONE DATA INGRESSO
+            div.innerHTML += `
+            <div class="card mb-3 shadow-sm">
+                <div class="card-header bg-light">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fw-bold fs-5">Ordine #${o.num_scontrino}</span>
+                        <span class="text-muted small">Portato il: <strong>${o.data_ingresso_formatted || o.data_ingresso.split(' ')[0]}</strong></span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-1">
+                        <span class="text-muted small">Previsto: ${o.data_ritiro} ${dateEff}</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div>${itemsHtml}</div>
+                    <hr class="my-2">
+                    <div class="text-end fw-bold text-success">Totale: € ${o.totale.toFixed(2)}</div>
+                </div>
+            </div>`; 
+            
+            }); } new bootstrap.Modal(document.getElementById('modalStorico')).show(); } catch (e) { alert("Errore caricamento storico."); }
     }
 
     let currentOrdRow = -1;
@@ -825,18 +889,27 @@
     async function cercaOrdini(numScontrino = null, clienteId = null) { 
         let url = `/cerca_ordini_aperti?`; if (numScontrino) url += `q=${numScontrino}`; if (clienteId) url += `cliente_id=${clienteId}`; const res = await fetch(url); const ordini = await res.json(); const tb = document.getElementById('tabella-ordini'); tb.innerHTML=''; 
         ordini.forEach(o=>{ let pagBadge = o.pagato ? '<span class="badge bg-success">SALDATO</span>' : `<span class="badge bg-danger">DA PAGARE: €${o.residuo.toFixed(2)}</span>`; if (o.acconto > 0 && !o.pagato) pagBadge += ` <span class="badge bg-warning text-dark">Acc. €${o.acconto.toFixed(2)}</span>`; let posTxt = o.posizioni ? `<span class="badge bg-dark">POS: ${o.posizioni}</span>` : '-'; let statoLav = o.tutto_pronto ? '<span class="badge bg-success">🟢 PRONTO</span>' : '<span class="badge bg-warning text-dark">🟡 IN LAV.</span>';
-            tb.innerHTML+=`<tr><td><strong>${o.num_scontrino}</strong></td><td>${o.data_ritiro}</td><td>${o.cliente_nome}</td><td>${statoLav}</td><td>${pagBadge}</td><td>${posTxt}</td><td><button class="btn btn-primary btn-sm me-1" onclick="apriDettaglioConsegna(${o.id}, '${o.cliente_nome}', ${o.num_scontrino})" title="Apri Ordine"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary btn-sm me-1" onclick="ristampaOrdine(${o.id}, 'scontrino')" title="Ristampa Scontrino">🖨️</button><button class="btn btn-outline-secondary btn-sm" onclick="ristampaOrdine(${o.id}, 'etichette')" title="Ristampa Etichette">🏷️</button></td></tr>`; 
+            // MODIFICATO: Aggiunta cella con Data Ingresso
+            tb.innerHTML+=`<tr><td><strong>${o.num_scontrino}</strong></td><td>${o.data_ingresso_str}</td><td>${o.data_ritiro}</td><td>${o.cliente_nome}</td><td>${statoLav}</td><td>${pagBadge}</td><td>${posTxt}</td><td><button class="btn btn-primary btn-sm me-1" onclick="apriDettaglioConsegna(${o.id}, '${o.cliente_nome}', ${o.num_scontrino}, '${o.data_ritiro}')" title="Apri Ordine"><i class="bi bi-eye"></i></button><button class="btn btn-outline-secondary btn-sm me-1" onclick="ristampaOrdine(${o.id}, 'scontrino')" title="Ristampa Scontrino">🖨️</button><button class="btn btn-outline-secondary btn-sm" onclick="ristampaOrdine(${o.id}, 'etichette')" title="Ristampa Etichette">🏷️</button></td></tr>`; 
         }); currentOrdRow = -1; 
     }
     async function ristampaOrdine(id, tipo) { if(!confirm(`Vuoi ristampare ${tipo.toUpperCase()}?`)) return; try { const res = await fetch('/api/ristampa_ordine', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: id, tipo: tipo}) }); const data = await res.json(); if(data.status === 'success') alert(data.msg); else alert("Errore: " + data.msg); } catch(e) { alert("Errore di comunicazione col server"); } }
 
-    async function apriDettaglioConsegna(id, nome, num) { 
+    async function apriDettaglioConsegna(id, nome, num, dataRitiro) { 
         ordineConsegnaId = id; document.getElementById('cons-id').innerText = num; document.getElementById('cons-cliente').innerText = nome; document.getElementById('sconto-consegna').value = 0; metodoConsegnaScelto = 'Contanti'; selectMetodoConsegna('Contanti');
+        document.getElementById('cons-data-ritiro').innerText = "Data Consegna Prevista: " + (dataRitiro || 'N/D');
         const res = await fetch(`/get_dettagli_ordine/${id}`); const data = await res.json(); cacheCapiConsegna = data.capi; cacheInfoOrdine = data.info; 
         const btnFiscale = document.getElementById('btn-consegna-fiscale'); if(data.info.fiscale_desk === 1) btnFiscale.style.display = 'none'; else btnFiscale.style.display = 'block'; 
         const btnToggle = document.getElementById('btn-toggle-pay'); if (data.info.pagato) { btnToggle.innerText = "Segna come NON PAGATO"; btnToggle.className = "btn btn-outline-danger fw-bold btn-sm"; } else { btnToggle.innerText = "Segna come PAGATO"; btnToggle.className = "btn btn-outline-success fw-bold btn-sm"; }
-        renderConsegnaList(); if(!modalConsegnaObj) modalConsegnaObj = new bootstrap.Modal(document.getElementById('modalConsegna')); modalConsegnaObj.show(); modalFocusIndex = -1; 
-        document.getElementById('modalConsegna').addEventListener('hidden.bs.modal', function () { if(!document.getElementById('view-consegna').classList.contains('hidden')) { if(lastSearchQuery.type === 'num') cercaOrdini(lastSearchQuery.val, null); else if(lastSearchQuery.type === 'id') cercaOrdini(null, lastSearchQuery.val); } else if(clienteCorrente) { selezionaCliente(clienteCorrente); } }, { once: true });
+        renderConsegnaList(); 
+        
+        // GESTIONE MODAL: Se è già aperto non lo ricreo per evitare sfarfallio
+        const modalEl = document.getElementById('modalConsegna');
+        if(!modalEl.classList.contains('show')) {
+            if(!modalConsegnaObj) modalConsegnaObj = new bootstrap.Modal(modalEl); 
+            modalConsegnaObj.show(); modalFocusIndex = -1; 
+            modalEl.addEventListener('hidden.bs.modal', function () { if(!document.getElementById('view-consegna').classList.contains('hidden')) { if(lastSearchQuery.type === 'num') cercaOrdini(lastSearchQuery.val, null); else if(lastSearchQuery.type === 'id') cercaOrdini(null, lastSearchQuery.val); } else if(clienteCorrente) { selezionaCliente(clienteCorrente); } }, { once: true });
+        }
     }
     
     async function toggleStatoPagamento() { if(!confirm("Vuoi cambiare lo stato del pagamento (Pagato <-> Da Pagare)?")) return; await fetch('/api/toggle_stato_pagamento', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ordine_id: ordineConsegnaId})}); bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); cercaOrdini(document.getElementById('cons-id').innerText); }
@@ -846,15 +919,26 @@
         let statusDot = c.stato_lavorazione ? '<span class="status-dot status-verde"></span>' : '<span class="status-dot status-giallo"></span>'; let catenaBadge = c.numero_catena ? `<span class="badge bg-info text-dark ms-2">Pos. ${c.numero_catena} (${c.tipo_stoccaggio || 'Nastro'})</span>` : ''; let printSingleBtn = `<button class="btn btn-sm btn-outline-secondary ms-2" onclick="stampaSingolaEtichetta(${c.id})" title="Stampa Etichetta Singola"><i class="bi bi-tag-fill"></i></button>`;
         ul.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center"><div>${statusDot} <input class="form-check-input me-2 chk-ritiro" type="checkbox" value="${c.id}" ${checked} data-prezzo="${c.prezzo}" onchange="calcolaSaldoParziale()"><span>${c.capo} ${catenaBadge} ${label} <small class="text-muted fw-bold">[ID: ${c.id}]</small></span> ${tappetoInput}</div><div><span class="fw-bold">€ ${c.prezzo.toFixed(2)}</span>${editBtn}${printSingleBtn}</div></li>`; }); calcolaSaldoParziale(); }
     
-    async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
+    async function aggiornaPrezzoTappeto(id, peso) { if(!peso || peso <= 0) return; let nuovoPrezzo = parseFloat(peso) * 7.00; await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: "Tappeto (al kg)", prezzo: nuovoPrezzo}) }); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; const dataRit = document.getElementById('cons-data-ritiro').innerText.replace("Data Consegna Prevista: ", ""); apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd, dataRit); }
 
     function selectMetodoConsegna(m) { metodoConsegnaScelto = m; document.getElementById('opt-cons-contanti').classList.remove('pay-selected'); document.getElementById('opt-cons-carta').classList.remove('pay-selected'); if(m === 'Contanti') document.getElementById('opt-cons-contanti').classList.add('pay-selected'); else document.getElementById('opt-cons-carta').classList.add('pay-selected'); }
     function calcolaSaldoParziale() { let valoreNuovaSelezione = 0; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => { valoreNuovaSelezione += parseFloat(el.getAttribute('data-prezzo')); }); let valoreGiaRitirato = 0; cacheCapiConsegna.forEach(c => { if(c.ritirato) valoreGiaRitirato += c.prezzo; }); let creditoGiaVersato = Math.max(0, cacheInfoOrdine.totale_versato - valoreGiaRitirato); let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; let daIncassare = Math.max(0, (valoreNuovaSelezione - creditoGiaVersato) - scontoExtra); mostraIncasso(daIncassare); const boxMetodi = document.getElementById('box-metodi-consegna'); if (daIncassare > 0) { boxMetodi.style.display = 'flex'; } else { boxMetodi.style.display = 'none'; metodoConsegnaScelto = 'Contanti'; } }
 
     function mostraIncasso(val) { const span = document.getElementById('cons-residuo-parziale'); span.innerText = "€ " + val.toFixed(2); span.setAttribute('data-val', val); span.className = val === 0 ? "fw-bold fs-1 text-success" : "fw-bold fs-1 text-danger"; }
     function toggleSelezionaTutto() { let checkboxes = document.querySelectorAll('.chk-ritiro:not(:disabled)'); let allChecked = Array.from(checkboxes).every(c => c.checked); checkboxes.forEach(chk => chk.checked = !allChecked); calcolaSaldoParziale(); }
-    function apriEditCapo(id, nome, prezzo) { document.getElementById('edit-id-capo').value = id; document.getElementById('edit-nome-capo').value = nome; document.getElementById('edit-prezzo-capo').value = prezzo; bootstrap.Modal.getInstance(document.getElementById('modalConsegna')).hide(); new bootstrap.Modal(document.getElementById('modalEditConsegna')).show(); }
-    async function salvaModificaCapo() { const id = document.getElementById('edit-id-capo').value; const nome = document.getElementById('edit-nome-capo').value; const prezzo = parseFloat(document.getElementById('edit-prezzo-capo').value); await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: nome, prezzo: prezzo}) }); bootstrap.Modal.getInstance(document.getElementById('modalEditConsegna')).hide(); const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd); }
+    function apriEditCapo(id, nome, prezzo) { document.getElementById('edit-id-capo').value = id; document.getElementById('edit-nome-capo').value = nome; document.getElementById('edit-prezzo-capo').value = prezzo; new bootstrap.Modal(document.getElementById('modalEditConsegna')).show(); }
+    
+    // FIX CHIUSURA IMPROVVISA: Nascondo solo il modal edit, non tocco quello principale se è aperto
+    async function salvaModificaCapo() { 
+        const id = document.getElementById('edit-id-capo').value; const nome = document.getElementById('edit-nome-capo').value; const prezzo = parseFloat(document.getElementById('edit-prezzo-capo').value); 
+        await fetch('/modifica_capo_ordine', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: id, nome: nome, prezzo: prezzo}) }); 
+        
+        bootstrap.Modal.getInstance(document.getElementById('modalEditConsegna')).hide(); 
+        
+        // Ricarico i dati nel modal principale SENZA chiuderlo/riaprirlo
+        const nomeCli = document.getElementById('cons-cliente').innerText; const numOrd = document.getElementById('cons-id').innerText; const dataRit = document.getElementById('cons-data-ritiro').innerText.replace("Data Consegna Prevista: ", "");
+        apriDettaglioConsegna(ordineConsegnaId, nomeCli, numOrd, dataRit); 
+    }
     
     async function confermaConsegna(stampaFiscale) { 
         let ids = []; document.querySelectorAll('.chk-ritiro:checked:not(:disabled)').forEach(el => ids.push(el.value)); if (ids.length === 0) return alert("Seleziona almeno un capo!"); let incasso = parseFloat(document.getElementById('cons-residuo-parziale').getAttribute('data-val')) || 0; let scontoExtra = parseFloat(document.getElementById('sconto-consegna').value) || 0; let metodoFinale = incasso > 0 ? metodoConsegnaScelto : ''; if (stampaFiscale) { if(!confirm(`Consegna e STAMPA FISCALE di € ${incasso.toFixed(2)} (${metodoFinale})?`)) return; } else { if(!confirm("Consegna SENZA scontrino?")) return; } 

@@ -76,7 +76,7 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
-    # Aggiornamenti Schema
+    # --- AGGIORNAMENTI SCHEMA ---
     try: cursor.execute("SELECT ordine FROM listino LIMIT 1")
     except: cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0"); cursor.execute("UPDATE listino SET ordine = id")
         
@@ -98,6 +98,10 @@ def init_db():
     try: cursor.execute("SELECT pagamenti_parziali FROM ordini LIMIT 1")
     except: cursor.execute("ALTER TABLE ordini ADD COLUMN pagamenti_parziali REAL DEFAULT 0")
 
+    # --- NUOVA COLONNA PER DATA RITIRO EFFETTIVO (PER STORICO) ---
+    try: cursor.execute("SELECT data_ritiro_effettivo FROM dettagli_ordine LIMIT 1")
+    except: cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN data_ritiro_effettivo TEXT DEFAULT ''")
+
     conn.commit()
 
     defaults = [
@@ -109,7 +113,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                      
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                     
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -363,8 +367,8 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
 
 def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
     stampante = get_setting("printer_star")
-    S_HUGE = get_star_font("huge")
-    S_BIG = get_star_font("big")
+    S_HUGE = get_star_font("huge") 
+    
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
@@ -372,11 +376,16 @@ def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
             ALIGN_CENTER = b'\x1b\x1d\x61\x01'
             BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_CP858 = b'\x1b\x1d\x74\x04'
             def enc(txt): return txt.encode('cp858', errors='replace')
+            
             buffer = b'\x1b@' + CMD_CP858 
             buffer += ALIGN_CENTER + b"\n"
-            buffer += S_HUGE + BOLD_ON + enc(f"{num_visibile}\n") + BOLD_OFF
+            
+            buffer += S_HUGE + BOLD_ON 
+            buffer += enc(f"{num_visibile}\n")
             buffer += b"\n"
-            buffer += S_BIG + enc(f"{cliente_nome[:20].upper()}\n") + b"\n"
+            buffer += enc(f"{cliente_nome[:20].upper()}\n")
+            buffer += BOLD_OFF 
+            
             buffer += b"\n\n\n\n\n" + CUT
             win32print.WritePrinter(hPrinter, buffer)
             win32print.EndPagePrinter(hPrinter); win32print.EndDocPrinter(hPrinter)
@@ -552,6 +561,7 @@ def modifica_cliente():
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
     q = request.args.get('q', ''); cliente_id = request.args.get('cliente_id', ''); conn = get_db(); cursor = conn.cursor()
+    # NB: data_ritiro è già presente nella select
     sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagamenti_parziali, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
     conditions = []
     if cliente_id: conditions.append(f"o.cliente_id = {cliente_id}")
@@ -563,7 +573,15 @@ def cerca_ordini_aperti():
     for row in cursor.fetchall(): 
         d = dict(row); d['cliente_nome'] = f"{d['nome']} {d['cognome'] or ''}".strip()
         d['residuo'] = max(0, d['totale'] - (d['acconto'] or 0) - (d['pagamenti_parziali'] or 0))
-        d['tutto_pronto'] = (d['non_pronti'] == 0); items.append(d)
+        d['tutto_pronto'] = (d['non_pronti'] == 0)
+        
+        # --- MODIFICA RICHIESTA: FORMATTAZIONE DATA INGRESSO PER RICONSEGNA ---
+        try:
+            d['data_ingresso_str'] = datetime.strptime(str(d['data_ingresso']).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+        except:
+            d['data_ingresso_str'] = d['data_ingresso']
+            
+        items.append(d)
     conn.close(); return jsonify(items)
 
 @app.route('/get_dettagli_ordine/<int:ordine_id>')
@@ -584,8 +602,13 @@ def consegna_items():
     if ids:
         cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); res = cursor.fetchone()
         if res: ordine_id = res[0]
+    
+    # --- MODIFICA: Aggiornamento data_ritiro_effettivo ---
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for item_id in ids:
-        cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,)); cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
+        cursor.execute("UPDATE dettagli_ordine SET ritirato = 1, data_ritiro_effettivo = ? WHERE id = ?", (now_str, item_id))
+        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
+    
     msg = "Nessuna stampa."
     if ordine_id:
         if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
@@ -831,24 +854,54 @@ def ristampa_ordine():
 @app.route('/api/storico_cliente/<int:cliente_id>')
 def storico_cliente(cliente_id):
     conn = get_db(); cursor = conn.cursor()
-    cursor.execute("""SELECT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, d.capo, d.prezzo FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.cliente_id = ? AND o.stato = 'Consegnato' ORDER BY o.data_ingresso ASC""", (cliente_id,))
+    # --- MODIFICA: Recupero data_ingresso ---
+    cursor.execute("""SELECT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, d.capo, d.prezzo, 
+                      (SELECT MAX(data_ritiro_effettivo) FROM dettagli_ordine WHERE ordine_id = o.id) as data_effettiva 
+                      FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id 
+                      WHERE o.cliente_id = ? AND o.stato = 'Consegnato' 
+                      ORDER BY o.data_ingresso ASC""", (cliente_id,))
     rows = cursor.fetchall(); conn.close()
     storico = {}
     for r in rows:
         oid = r['id']
-        if oid not in storico: storico[oid] = {'num_scontrino': r['num_scontrino'], 'data_ingresso': r['data_ingresso'], 'data_ritiro': r['data_ritiro'], 'totale': r['totale'], 'capi': []}
+        if oid not in storico: 
+            d_eff = r['data_effettiva']
+            # --- MODIFICA RICHIESTA: FORMATTAZIONE GIORNO/MESE/ANNO ---
+            if d_eff:
+                try:
+                    d_eff = datetime.strptime(str(d_eff).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+                except:
+                    d_eff = str(d_eff)[:10] 
+            else:
+                d_eff = "-"
+            
+            try:
+                data_ing_fmt = datetime.strptime(r['data_ingresso'].split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+            except:
+                data_ing_fmt = r['data_ingresso']
+
+            storico[oid] = {
+                'num_scontrino': r['num_scontrino'], 
+                'data_ingresso': r['data_ingresso'], 
+                'data_ingresso_formatted': data_ing_fmt, 
+                'data_ritiro': r['data_ritiro'], 
+                'data_ritiro_effettivo': d_eff, 
+                'totale': r['totale'], 
+                'capi': []
+            }
         storico[oid]['capi'].append({'capo': r['capo'], 'prezzo': r['prezzo']})
     return jsonify(list(storico.values()))
 
 @app.route('/api/get_stats')
 def api_get_stats():
     start_date = request.args.get('start', '2000-01-01'); end_date_raw = request.args.get('end', '2100-01-01')
+    q_capo = request.args.get('search_capo', '').strip() 
+    
     conn = get_db(); cursor = conn.cursor()
 
     # --- CALCOLO DATE ANNO SCORSO ---
     s_date = datetime.strptime(start_date, "%Y-%m-%d")
     e_date = datetime.strptime(end_date_raw, "%Y-%m-%d")
-    # Sottrazione semplice di 365 giorni (approx) o gestione bisestile precisa
     prev_start = (s_date - timedelta(days=366 if (s_date.year - 1) % 4 == 0 else 365)).strftime("%Y-%m-%d")
     prev_end = (e_date - timedelta(days=366 if (e_date.year - 1) % 4 == 0 else 365)).strftime("%Y-%m-%d")
 
@@ -871,20 +924,13 @@ def api_get_stats():
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); total_revenue = cursor.fetchone()[0] or 0.0
     cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); capi_entrati_period = cursor.fetchone()[0] or 0
     
-    # --- STATS ANNO PRECEDENTE (COMPARAZIONE) ---
-    # 1. Totale Ricevute Fatte (Fiscali Count) Anno scorso
+    # --- STATS ANNO PRECEDENTE ---
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
     prev_fiscal_count = cursor.fetchone()[0] or 0
-
-    # 2. Totale Valore Ricevute (Fiscali Value) Anno scorso
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
     prev_fiscal_value = cursor.fetchone()[0] or 0.0
-
-    # 3. Totale Incasso Globale Anno scorso
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
     prev_total_revenue = cursor.fetchone()[0] or 0.0
-
-    # 4. Capi Entrati Anno scorso
     cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (prev_start, prev_end))
     prev_capi_entrati = cursor.fetchone()[0] or 0
 
@@ -896,9 +942,26 @@ def api_get_stats():
     cursor.execute("""SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati, SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_pagamenti = cursor.fetchone(); ordini_pagati = row_pagamenti[0] or 0; ordini_da_pagare = row_pagamenti[1] or 0
     cursor.execute("""SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND stato = 'Consegnato' AND date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); scontrini_prodotti = cursor.fetchone()[0]
     
-    cursor.execute("""SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ? ORDER BY c.nome, c.cognome""", (start_date, end_date_raw))
-    raw_ritirati = cursor.fetchall(); ritirati_by_client = defaultdict(list)
-    for r in raw_ritirati: ritirati_by_client[f"{r['nome']} {r['cognome'] or ''}".strip()].append({'capo': r['capo'], 'prezzo': r['prezzo'], 'data': r['data_ingresso']})
+    # --- MODIFICA: FILTRO RICERCA PER CAPI RITIRATI ---
+    sql_ritirati = """SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso, d.data_ritiro_effettivo 
+                      FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id 
+                      WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ?"""
+    params_ritirati = [start_date, end_date_raw]
+    
+    if q_capo:
+        sql_ritirati += " AND d.capo LIKE ?"
+        params_ritirati.append(f"%{q_capo}%")
+        
+    sql_ritirati += " ORDER BY c.nome, c.cognome"
+    
+    cursor.execute(sql_ritirati, params_ritirati)
+    raw_ritirati = cursor.fetchall()
+    
+    ritirati_by_client = defaultdict(list)
+    for r in raw_ritirati: 
+        data_show = r['data_ritiro_effettivo'] if r['data_ritiro_effettivo'] else r['data_ingresso']
+        ritirati_by_client[f"{r['nome']} {r['cognome'] or ''}".strip()].append({'capo': r['capo'], 'prezzo': r['prezzo'], 'data': data_show})
+    
     ritirati_dettaglio = []; 
     for cliente, items in ritirati_by_client.items(): ritirati_dettaglio.append({'cliente': cliente, 'items': items})
     ritirati_dettaglio.sort(key=lambda x: x['cliente']); conn.close()
@@ -917,7 +980,6 @@ def api_get_stats():
             'ordini_pagati': ordini_pagati, 
             'ordini_da_pagare': ordini_da_pagare, 
             'scontrini_prodotti': scontrini_prodotti,
-            # Dati Comparazione Anno Scorso
             'prev_fiscal_count': prev_fiscal_count,
             'prev_fiscal_value': prev_fiscal_value,
             'prev_total_revenue': prev_total_revenue,
@@ -927,5 +989,5 @@ def api_get_stats():
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.8.6 (Remote Mag + Stats Compare) ---")
+    print("--- AVVIO WASHIFY V.1.9.0 (Riconsegna Data Effettiva + Stats Search + Stampa Mod) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
