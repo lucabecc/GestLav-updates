@@ -25,7 +25,6 @@ SEDE = "MARINA"
 DB_NAME = "lavanderia.db"
 
 # --- CONFIGURAZIONE MAGAZZINO REMOTO (ARUBA) ---
-# !!! ATTENZIONE: SOSTITUISCI CON IL TUO SITO VERO !!!
 REMOTE_URL = "https://www.lavanderiaigea.com/api_magazzino.php" 
 REMOTE_SECRET = "WASHIFY_SECURE_KEY" 
 
@@ -845,6 +844,14 @@ def storico_cliente(cliente_id):
 def api_get_stats():
     start_date = request.args.get('start', '2000-01-01'); end_date_raw = request.args.get('end', '2100-01-01')
     conn = get_db(); cursor = conn.cursor()
+
+    # --- CALCOLO DATE ANNO SCORSO ---
+    s_date = datetime.strptime(start_date, "%Y-%m-%d")
+    e_date = datetime.strptime(end_date_raw, "%Y-%m-%d")
+    # Sottrazione semplice di 365 giorni (approx) o gestione bisestile precisa
+    prev_start = (s_date - timedelta(days=366 if (s_date.year - 1) % 4 == 0 else 365)).strftime("%Y-%m-%d")
+    prev_end = (e_date - timedelta(days=366 if (e_date.year - 1) % 4 == 0 else 365)).strftime("%Y-%m-%d")
+
     daily_stats = defaultdict(lambda: {'items': 0, 'revenue': 0.0, 'fiscal': 0})
     cursor.execute("""SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY date(o.data_ingresso)""", (start_date, end_date_raw))
     for r in cursor.fetchall(): daily_stats[r['data']]['items'] = r['tot_capi']
@@ -854,27 +861,71 @@ def api_get_stats():
         daily_stats[r['data']]['fiscal'] = r['tot_fiscali'] if r['tot_fiscali'] else 0
     trend_daily = []
     for d in sorted(daily_stats.keys()): trend_daily.append({'data': d, 'items': daily_stats[d]['items'], 'revenue': daily_stats[d]['revenue'], 'fiscal': daily_stats[d]['fiscal']})
+    
     cursor.execute("""SELECT d.capo, count(d.id) as qty FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY d.capo ORDER BY qty DESC LIMIT 10""", (start_date, end_date_raw))
     top_items = [dict(row) for row in cursor.fetchall()]
+
+    # --- STATS CORRENTI ---
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); fiscal_count = cursor.fetchone()[0]
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); fiscal_value = cursor.fetchone()[0] or 0.0
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); total_revenue = cursor.fetchone()[0] or 0.0
     cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); capi_entrati_period = cursor.fetchone()[0] or 0
+    
+    # --- STATS ANNO PRECEDENTE (COMPARAZIONE) ---
+    # 1. Totale Ricevute Fatte (Fiscali Count) Anno scorso
+    cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
+    prev_fiscal_count = cursor.fetchone()[0] or 0
+
+    # 2. Totale Valore Ricevute (Fiscali Value) Anno scorso
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
+    prev_fiscal_value = cursor.fetchone()[0] or 0.0
+
+    # 3. Totale Incasso Globale Anno scorso
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
+    prev_total_revenue = cursor.fetchone()[0] or 0.0
+
+    # 4. Capi Entrati Anno scorso
+    cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (prev_start, prev_end))
+    prev_capi_entrati = cursor.fetchone()[0] or 0
+
     params_clients = (start_date, end_date_raw, start_date, end_date_raw)
     cursor.execute("""SELECT c.nome, c.cognome, SUM(o.totale) as total_spent, (SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o2 ON d.ordine_id = o2.id WHERE o2.cliente_id = c.id AND date(o2.data_ingresso) BETWEEN ? AND ?) as total_items FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY c.id ORDER BY total_spent DESC LIMIT 10""", params_clients)
     top_clients = [dict(row) for row in cursor.fetchall()]
+    
     cursor.execute("""SELECT SUM(CASE WHEN d.ritirato = 1 THEN 1 ELSE 0 END) as ritirati FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_ritiri = cursor.fetchone(); capi_ritirati = row_ritiri[0] or 0
     cursor.execute("""SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati, SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_pagamenti = cursor.fetchone(); ordini_pagati = row_pagamenti[0] or 0; ordini_da_pagare = row_pagamenti[1] or 0
     cursor.execute("""SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND stato = 'Consegnato' AND date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); scontrini_prodotti = cursor.fetchone()[0]
+    
     cursor.execute("""SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ? ORDER BY c.nome, c.cognome""", (start_date, end_date_raw))
     raw_ritirati = cursor.fetchall(); ritirati_by_client = defaultdict(list)
     for r in raw_ritirati: ritirati_by_client[f"{r['nome']} {r['cognome'] or ''}".strip()].append({'capo': r['capo'], 'prezzo': r['prezzo'], 'data': r['data_ingresso']})
     ritirati_dettaglio = []; 
     for cliente, items in ritirati_by_client.items(): ritirati_dettaglio.append({'cliente': cliente, 'items': items})
     ritirati_dettaglio.sort(key=lambda x: x['cliente']); conn.close()
-    return jsonify({'trend_daily': trend_daily, 'top_items': top_items, 'ritirati_dettaglio': ritirati_dettaglio, 'stats': {'fiscal_count': fiscal_count, 'fiscal_value': fiscal_value, 'total_revenue': total_revenue, 'top_clients': top_clients, 'capi_ritirati': capi_ritirati, 'capi_totali': capi_entrati_period, 'ordini_pagati': ordini_pagati, 'ordini_da_pagare': ordini_da_pagare, 'scontrini_prodotti': scontrini_prodotti}})
+    
+    return jsonify({
+        'trend_daily': trend_daily, 
+        'top_items': top_items, 
+        'ritirati_dettaglio': ritirati_dettaglio, 
+        'stats': {
+            'fiscal_count': fiscal_count, 
+            'fiscal_value': fiscal_value, 
+            'total_revenue': total_revenue, 
+            'top_clients': top_clients, 
+            'capi_ritirati': capi_ritirati, 
+            'capi_totali': capi_entrati_period, 
+            'ordini_pagati': ordini_pagati, 
+            'ordini_da_pagare': ordini_da_pagare, 
+            'scontrini_prodotti': scontrini_prodotti,
+            # Dati Comparazione Anno Scorso
+            'prev_fiscal_count': prev_fiscal_count,
+            'prev_fiscal_value': prev_fiscal_value,
+            'prev_total_revenue': prev_total_revenue,
+            'prev_capi_totali': prev_capi_entrati
+        }
+    })
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.8.5 (Remote Mag) ---")
+    print("--- AVVIO WASHIFY V.1.8.6 (Remote Mag + Stats Compare) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)

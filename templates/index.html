@@ -199,9 +199,34 @@
     </div>
     <h4 class="mt-4 fw-bold text-secondary">📄 Report Dettagliati</h4>
     <div id="stats-text-report" class="row g-3 mt-1">
-        <div class="col-md-3 stat-section" id="box-fiscali" style="display:block;"><div class="card border-primary h-100 text-center p-3"><div class="stat-card-text text-primary" id="rep-fiscale-count">0</div><div class="stat-card-label">N. Scontrini Fiscali</div><hr><div class="stat-card-text text-dark" style="font-size: 1.5rem;" id="rep-fiscale-value">€ 0.00</div><div class="stat-card-label">Totale Fiscale (€)</div></div></div>
-        <div class="col-md-3 stat-section" id="box-incassi" style="display:block;"><div class="card border-success h-100 text-center p-3"><div class="stat-card-text text-success" id="rep-revenue">€ 0.00</div><div class="stat-card-label">Totale Incasso Globale</div></div></div>
-        <div class="col-md-3 stat-section" id="box-ritiri" style="display:block;"><div class="card border-warning h-100 text-center p-3"><div class="stat-card-text text-warning"><span id="rep-capi-entrati">0</span></div><div class="stat-card-label">Capi Entrati</div><hr><div class="stat-card-text text-secondary" style="font-size: 1.2rem;">Ritirati: <span id="rep-ritirati">0</span></div><button class="btn btn-sm btn-outline-dark mt-2" onclick="apriDettaglioRitirati()">📄 Vedi Dettagli</button></div></div>
+        <div class="col-md-3 stat-section" id="box-fiscali" style="display:block;">
+            <div class="card border-primary h-100 text-center p-3">
+                <div class="stat-card-text text-primary" id="rep-fiscale-count">0</div>
+                <div class="stat-card-label">N. Scontrini Fiscali</div>
+                <div id="rep-fiscale-count-prev" class="small text-muted border-top pt-1 mt-1">Anno sc.: 0</div>
+                <hr>
+                <div class="stat-card-text text-dark" style="font-size: 1.5rem;" id="rep-fiscale-value">€ 0.00</div>
+                <div class="stat-card-label">Totale Fiscale (€)</div>
+                <div id="rep-fiscale-value-prev" class="small text-muted border-top pt-1 mt-1">Anno sc.: € 0.00</div>
+            </div>
+        </div>
+        <div class="col-md-3 stat-section" id="box-incassi" style="display:block;">
+            <div class="card border-success h-100 text-center p-3">
+                <div class="stat-card-text text-success" id="rep-revenue">€ 0.00</div>
+                <div class="stat-card-label">Totale Incasso Globale</div>
+                <div id="rep-revenue-prev" class="small text-muted border-top pt-1 mt-1">Anno sc.: € 0.00</div>
+            </div>
+        </div>
+        <div class="col-md-3 stat-section" id="box-ritiri" style="display:block;">
+            <div class="card border-warning h-100 text-center p-3">
+                <div class="stat-card-text text-warning"><span id="rep-capi-entrati">0</span></div>
+                <div class="stat-card-label">Capi Entrati</div>
+                <div id="rep-capi-entrati-prev" class="small text-muted border-top pt-1 mt-1">Anno sc.: 0</div>
+                <hr>
+                <div class="stat-card-text text-secondary" style="font-size: 1.2rem;">Ritirati: <span id="rep-ritirati">0</span></div>
+                <button class="btn btn-sm btn-outline-dark mt-2" onclick="apriDettaglioRitirati()">📄 Vedi Dettagli</button>
+            </div>
+        </div>
         <div class="col-md-3 stat-section" id="box-clienti" style="display:block;"><div class="card h-100 p-3"><h6 class="fw-bold mb-2">💎 Top Clienti</h6><table class="table table-sm table-striped"><thead class="table-dark"><tr><th>Nome</th><th class="text-end">€</th></tr></thead><tbody id="table-top-clients"></tbody></table></div></div>
     </div>
     <div style="height: 100px;"></div>
@@ -468,7 +493,6 @@
             const isLow = parseInt(item.quantita) <= parseInt(item.soglia_minima);
             const classRow = isLow ? 'scorta-bassa' : '';
             const warningIcon = isLow ? '⚠️ ' : '';
-            // Aggiunto pulsante Modifica (Matita)
             tbody.innerHTML += `
             <tr class="${classRow}">
                 <td class="fw-bold text-start ps-4">${warningIcon}${item.prodotto}<br><small class="text-muted">${item.note || ''}</small></td>
@@ -497,7 +521,6 @@
         bootstrap.Modal.getInstance(document.getElementById('modalAddMagazzino')).hide(); btn.disabled = false; btn.innerText = "SALVA SU CLOUD"; caricaMagazzino();
     }
 
-    // 2. MODIFICA PRODOTTO (Nuova Funzione)
     function apriModificaProdotto(id) {
         const item = cacheMagazzino.find(x => x.id == id);
         if(!item) return;
@@ -513,7 +536,6 @@
         const nome = document.getElementById('edit-mag-nome').value;
         const soglia = document.getElementById('edit-mag-soglia').value;
         const note = document.getElementById('edit-mag-note').value;
-        
         await fetch('/api/magazzino_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'edit_details', id: id, prodotto: nome, soglia: soglia, note: note }) });
         bootstrap.Modal.getInstance(document.getElementById('modalEditMagazzino')).hide();
         caricaMagazzino();
@@ -526,7 +548,6 @@
 
     async function eliminaProdotto(id) { if(!confirm("Eliminare definitivamente dal database condiviso?")) return; await fetch('/api/magazzino_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'delete', id: id }) }); caricaMagazzino(); }
 
-    // 3. GESTIONE ORDINI FORNITORI (Nuove Funzioni)
     async function caricaOrdiniFornitori() {
         const div = document.getElementById('lista-ordini-fornitori');
         div.innerHTML = '<p class="text-center mt-3"><div class="spinner-border text-primary"></div> Caricamento ordini...</p>';
@@ -541,7 +562,6 @@
             data.data.forEach(ord => {
                 let itemsHtml = '';
                 ord.contenuto.forEach(i => { itemsHtml += `<li>${i.nome} (x${i.qty})</li>`; });
-                
                 div.innerHTML += `
                 <div class="card mb-3 shadow-sm border-start border-4 border-warning">
                     <div class="card-body d-flex justify-content-between align-items-center">
@@ -605,7 +625,6 @@
         if(!confirm("Confermi l'arrivo della merce? Le quantità verranno aggiornate automaticamente.")) return;
         await fetch('/api/magazzino_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'confirm_order', id_ordine: id }) });
         caricaOrdiniFornitori();
-        // Aggiorniamo anche la cache magazzino in background
         const res = await fetch('/api/magazzino_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'read' }) });
         const data = await res.json();
         cacheMagazzino = data.data;
@@ -618,7 +637,6 @@
     }
     // --- FINE CODICE MAGAZZINO ---
 
-    // [IL RESTO DEL TUO CODICE JAVASCRIPT RIMANE INVARIATO QUI SOTTO]
     async function autoCheckUpdate() {
         try { const res = await fetch('/api/check_update'); const data = await res.json(); if (data.update_available) { document.getElementById('ver-old').innerText = data.local; document.getElementById('ver-new').innerText = data.remote; new bootstrap.Modal(document.getElementById('modalAutoUpdate')).show(); } } catch(e) { console.error("Auto check update failed", e); }
     }
@@ -636,8 +654,22 @@
 
     async function caricaStatistiche() {
         const start = document.getElementById('stats-start').value; const end = document.getElementById('stats-end').value;
-        try { const res = await fetch(`/api/get_stats?start=${start}&end=${end}`); const data = await res.json(); aggiornaGraficoTrend(data.trend_daily); aggiornaGraficoItems(data.top_items); currentRitiratiData = data.ritirati_dettaglio; const s = data.stats; document.getElementById('rep-fiscale-count').innerText = s.fiscal_count; document.getElementById('rep-fiscale-value').innerText = "€ " + s.fiscal_value.toFixed(2); document.getElementById('rep-revenue').innerText = "€ " + s.total_revenue.toFixed(2); document.getElementById('rep-capi-entrati').innerText = s.capi_totali; document.getElementById('rep-ritirati').innerText = s.capi_ritirati; 
-            const tbody = document.getElementById('table-top-clients'); tbody.innerHTML = ''; s.top_clients.forEach(c => { tbody.innerHTML += `<tr><td>${c.nome} ${c.cognome || ''}</td><td class="text-end"><span class="badge bg-light text-dark border me-2">${c.total_items} Capi</span><strong>€ ${c.total_spent.toFixed(2)}</strong></td></tr>`; }); aggiornaVisibilitaReport();
+        try { const res = await fetch(`/api/get_stats?start=${start}&end=${end}`); const data = await res.json(); aggiornaGraficoTrend(data.trend_daily); aggiornaGraficoItems(data.top_items); currentRitiratiData = data.ritirati_dettaglio; const s = data.stats; 
+        
+        // Aggiornamento Dati Correnti
+        document.getElementById('rep-fiscale-count').innerText = s.fiscal_count; 
+        document.getElementById('rep-fiscale-value').innerText = "€ " + s.fiscal_value.toFixed(2); 
+        document.getElementById('rep-revenue').innerText = "€ " + s.total_revenue.toFixed(2); 
+        document.getElementById('rep-capi-entrati').innerText = s.capi_totali; 
+        document.getElementById('rep-ritirati').innerText = s.capi_ritirati; 
+        
+        // Aggiornamento Dati Anno Scorso (Comparazione)
+        document.getElementById('rep-fiscale-count-prev').innerText = `Anno sc.: ${s.prev_fiscal_count}`;
+        document.getElementById('rep-fiscale-value-prev').innerText = `Anno sc.: € ${s.prev_fiscal_value.toFixed(2)}`;
+        document.getElementById('rep-revenue-prev').innerText = `Anno sc.: € ${s.prev_total_revenue.toFixed(2)}`;
+        document.getElementById('rep-capi-entrati-prev').innerText = `Anno sc.: ${s.prev_capi_totali}`;
+
+        const tbody = document.getElementById('table-top-clients'); tbody.innerHTML = ''; s.top_clients.forEach(c => { tbody.innerHTML += `<tr><td>${c.nome} ${c.cognome || ''}</td><td class="text-end"><span class="badge bg-light text-dark border me-2">${c.total_items} Capi</span><strong>€ ${c.total_spent.toFixed(2)}</strong></td></tr>`; }); aggiornaVisibilitaReport();
         } catch(e) { console.error("Errore statistiche:", e); }
     }
     
@@ -878,5 +910,6 @@
     async function eliminaCapoDefinitivo() { const idCapo = document.getElementById('del-id-capo').value; if(!idCapo) return alert("Inserisci il Codice Capo!"); if(!confirm(`ELIMINARE IL CAPO CODICE ${idCapo}? L'operazione è irreversibile.`)) return; const res = await fetch('/api/elimina_capo_definitivo', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id_capo: idCapo}) }); const data = await res.json(); alert(data.msg); document.getElementById('del-id-capo').value = ''; }
     async function salvaNuovoOrdineListino() { const rows = document.querySelectorAll('#tabella-listino tr'); let ids = []; rows.forEach(r => ids.push(r.getAttribute('data-id'))); await fetch('/api/aggiorna_ordine_listino', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ordine_ids: ids}) }); const r2 = await fetch('/api/get_listino_raw'); listinoRaw = await r2.json(); }
 </script>
+
 </body>
 </html>
