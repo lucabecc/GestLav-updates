@@ -24,6 +24,11 @@ app = Flask(__name__, template_folder=TEMPLATE_DIR)
 SEDE = "MARINA"
 DB_NAME = "lavanderia.db"
 
+# --- CONFIGURAZIONE MAGAZZINO REMOTO (ARUBA) ---
+# !!! ATTENZIONE: SOSTITUISCI CON IL TUO SITO VERO !!!
+REMOTE_URL = "https://www.lavanderiaigea.com/api_magazzino.php" 
+REMOTE_SECRET = "WASHIFY_SECURE_KEY" 
+
 # --- CONFIGURAZIONE WHATSAPP (CARTELLA SCAMBIO) ---
 PATH_WA_OUT = r"C:\Washify_Whatsapp\Da_Inviare"
 PATH_WA_ESITI = r"C:\Washify_Whatsapp\Esiti"
@@ -359,10 +364,8 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
 
 def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
     stampante = get_setting("printer_star")
-    # MODIFICA: Usiamo un font enorme solo per il numero
     S_HUGE = get_star_font("huge")
     S_BIG = get_star_font("big")
-    
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
@@ -370,72 +373,42 @@ def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
             ALIGN_CENTER = b'\x1b\x1d\x61\x01'
             BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_CP858 = b'\x1b\x1d\x74\x04'
             def enc(txt): return txt.encode('cp858', errors='replace')
-            
             buffer = b'\x1b@' + CMD_CP858 
-            buffer += ALIGN_CENTER 
-            buffer += b"\n"
-            # MODIFICA RICHIESTA: Via la parola "ORDINE", solo il numero gigante
+            buffer += ALIGN_CENTER + b"\n"
             buffer += S_HUGE + BOLD_ON + enc(f"{num_visibile}\n") + BOLD_OFF
             buffer += b"\n"
-            buffer += S_BIG + enc(f"{cliente_nome[:20].upper()}\n")
-            buffer += b"\n"
-            
+            buffer += S_BIG + enc(f"{cliente_nome[:20].upper()}\n") + b"\n"
             buffer += b"\n\n\n\n\n" + CUT
-            
             win32print.WritePrinter(hPrinter, buffer)
             win32print.EndPagePrinter(hPrinter); win32print.EndDocPrinter(hPrinter)
         finally: win32print.ClosePrinter(hPrinter)
         return True
     except Exception as e: return False
 
-
-# --- FUNZIONE FORMATTAZIONE WHATSAPP ---
 def formatta_scontrino_whatsapp(nome_cliente, num_scontrino, carrello, totale, acconto, data_ritiro):
-    text = f"*LAVANDERIA WASHIFY*\n"
-    text += f"Ordine N. *{num_scontrino}*\n"
-    text += f"Cliente: {nome_cliente.strip()}\n"
-    text += f"Ritiro: *{data_ritiro}*\n"
-    text += "--------------------\n"
-    
-    for item in carrello:
-        prezzo = f"{item['prezzo']:.2f}"
-        nome = item['nome'][:20]
-        text += f"{nome} : € {prezzo}\n"
-        
-    text += "--------------------\n"
-    text += f"*TOTALE: € {totale:.2f}*\n"
+    text = f"*LAVANDERIA WASHIFY*\nOrdine N. *{num_scontrino}*\nCliente: {nome_cliente.strip()}\nRitiro: *{data_ritiro}*\n--------------------\n"
+    for item in carrello: text += f"{item['nome'][:20]} : € {item['prezzo']:.2f}\n"
+    text += "--------------------\n" + f"*TOTALE: € {totale:.2f}*\n"
     if acconto > 0:
-        text += f"Acconto: € {acconto:.2f}\n"
         residuo = max(0, totale - acconto)
-        if residuo > 0:
-            text += f"*DA SALDARE: € {residuo:.2f}*\n"
-        else:
-            text += "*PAGATO* ✅\n"
-    else:
-         text += "*DA PAGARE* ❌\n"
-         
+        text += f"Acconto: € {acconto:.2f}\n" + (f"*DA SALDARE: € {residuo:.2f}*\n" if residuo > 0 else "*PAGATO* ✅\n")
+    else: text += "*DA PAGARE* ❌\n"
     text += "\nGrazie e arrivederci!"
     return urllib.parse.quote(text)
 
-# --- HELPER PER GESTIONE RANGE CATENA ---
 def parse_catena_range(catena_str):
     numeri = set()
     catena_str = str(catena_str).strip()
     if not catena_str: return numeri
-    
     try:
         if '-' in catena_str:
             parts = catena_str.split('-')
             if len(parts) == 2:
                 start, end = int(parts[0]), int(parts[1])
                 if start > end: start, end = end, start
-                for i in range(start, end + 1):
-                    numeri.add(i)
-        else:
-            numeri.add(int(catena_str))
-    except ValueError:
-        pass 
-        
+                for i in range(start, end + 1): numeri.add(i)
+        else: numeri.add(int(catena_str))
+    except ValueError: pass 
     return numeri
 
 # --- ROTTE API ---
@@ -443,6 +416,20 @@ def parse_catena_range(catena_str):
 def home():
     listino_db = get_listino_dict()
     return render_template('index.html', sede=SEDE, listino=listino_db, festivita=FESTIVITA)
+
+@app.route('/api/magazzino_proxy', methods=['POST'])
+def api_magazzino_proxy():
+    try:
+        payload = request.json
+        payload['secret'] = REMOTE_SECRET
+        if 'sede' not in payload: payload['sede'] = SEDE
+        data_encoded = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(REMOTE_URL, data=data_encoded, headers={'Content-Type': 'application/json', 'User-Agent': 'WashifyClient'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            resp_data = response.read().decode('utf-8')
+            return jsonify(json.loads(resp_data))
+    except urllib.error.URLError as e: return jsonify({'status': 'error', 'msg': f"Connessione: {e.reason}"})
+    except Exception as e: return jsonify({'status': 'error', 'msg': f"Errore Sistema: {str(e)}"})
 
 @app.route('/api/get_listino_raw')
 def api_get_listino_raw():
@@ -456,10 +443,8 @@ def api_aggiorna_ordine_listino():
     nuovo_ordine = request.json.get('ordine_ids', [])
     conn = get_db(); cursor = conn.cursor()
     try:
-        for index, item_id in enumerate(nuovo_ordine):
-            cursor.execute("UPDATE listino SET ordine = ? WHERE id = ?", (index, item_id))
-        conn.commit()
-        return jsonify({'status': 'success'})
+        for index, item_id in enumerate(nuovo_ordine): cursor.execute("UPDATE listino SET ordine = ? WHERE id = ?", (index, item_id))
+        conn.commit(); return jsonify({'status': 'success'})
     except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
     finally: conn.close()
 
@@ -467,12 +452,10 @@ def api_aggiorna_ordine_listino():
 def api_save_item_listino():
     d = request.json; conn = get_db(); cursor = conn.cursor()
     tipo = d.get('tipo_stoccaggio', 'Nastro')
-    if 'id' in d and d['id']: 
-        cursor.execute("UPDATE listino SET categoria=?, capo=?, prezzo=?, tipo_stoccaggio=? WHERE id=?", (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, d['id']))
+    if 'id' in d and d['id']: cursor.execute("UPDATE listino SET categoria=?, capo=?, prezzo=?, tipo_stoccaggio=? WHERE id=?", (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, d['id']))
     else: 
         cursor.execute("SELECT MAX(ordine) FROM listino")
-        max_order = cursor.fetchone()[0]
-        next_order = (max_order + 1) if max_order is not None else 0
+        max_order = cursor.fetchone()[0]; next_order = (max_order + 1) if max_order is not None else 0
         cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", (d['categoria'].upper(), d['capo'], d['prezzo'], tipo, next_order))
     conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
@@ -486,8 +469,7 @@ def api_get_settings():
     data = {row['chiave']: row['valore'] for row in cursor.fetchall()}; conn.close()
     backup_folder = os.path.join(BASE_DIR, "backup")
     backup_file = os.path.join(backup_folder, "app.py")
-    esiste = os.path.exists(backup_file)
-    data['has_backup'] = 1 if esiste else 0
+    data['has_backup'] = 1 if os.path.exists(backup_file) else 0
     return jsonify(data)
 
 @app.route('/api/save_settings', methods=['POST'])
@@ -511,8 +493,7 @@ def get_system_printers():
 @app.route('/api/elimina_ordine_definitivo', methods=['POST'])
 def elimina_ordine_definitivo():
     num = request.json.get('num_scontrino'); conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT id FROM ordini WHERE num_scontrino = ?", (num,))
-    res = cursor.fetchone()
+    cursor.execute("SELECT id FROM ordini WHERE num_scontrino = ?", (num,)); res = cursor.fetchone()
     if not res: conn.close(); return jsonify({'status': 'error', 'msg': 'Ordine non trovato!'})
     ordine_id = res[0]
     cursor.execute("DELETE FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,)); cursor.execute("DELETE FROM ordini WHERE id = ?", (ordine_id,))
@@ -572,9 +553,7 @@ def modifica_cliente():
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
     q = request.args.get('q', ''); cliente_id = request.args.get('cliente_id', ''); conn = get_db(); cursor = conn.cursor()
-    
     sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagamenti_parziali, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
-    
     conditions = []
     if cliente_id: conditions.append(f"o.cliente_id = {cliente_id}")
     elif q.isdigit(): conditions.append(f"o.num_scontrino = {q}")
@@ -582,31 +561,18 @@ def cerca_ordini_aperti():
         if not q and not cliente_id: conditions.append("1=0") 
     if conditions: sql += " AND " + " AND ".join(conditions)
     sql += " ORDER BY o.id DESC"; cursor.execute(sql); items = []
-    
     for row in cursor.fetchall(): 
-        d = dict(row)
-        d['cliente_nome'] = f"{d['nome']} {d['cognome'] or ''}".strip()
+        d = dict(row); d['cliente_nome'] = f"{d['nome']} {d['cognome'] or ''}".strip()
         d['residuo'] = max(0, d['totale'] - (d['acconto'] or 0) - (d['pagamenti_parziali'] or 0))
-        d['tutto_pronto'] = (d['non_pronti'] == 0)
-        items.append(d)
-        
+        d['tutto_pronto'] = (d['non_pronti'] == 0); items.append(d)
     conn.close(); return jsonify(items)
 
 @app.route('/get_dettagli_ordine/<int:ordine_id>')
 def get_dettagli_ordine(ordine_id):
     conn = get_db(); cursor = conn.cursor()
     cursor.execute("SELECT totale, acconto, fiscale_emesso, fiscale_desk, pagato, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,)); res = cursor.fetchone()
-    
-    totale = res[0]
-    pagato = res[4]
-    acconto = res[1] or 0
-    pagamenti_parziali = res[5] or 0 
-    
-    if pagato == 1: 
-        totale_versato = totale
-    else: 
-        totale_versato = acconto + pagamenti_parziali 
-        
+    totale = res[0]; pagato = res[4]; acconto = res[1] or 0; pagamenti_parziali = res[5] or 0 
+    totale_versato = totale if pagato == 1 else (acconto + pagamenti_parziali)
     info = {'totale_ordine': totale, 'totale_versato': totale_versato, 'acconto': acconto, 'pagamenti_parziali': pagamenti_parziali, 'fiscale_emesso': res[2], 'fiscale_desk': res[3], 'pagato': pagato}
     cursor.execute("SELECT id, capo, prezzo, ritirato, stato_lavorazione, numero_catena, tipo_stoccaggio FROM dettagli_ordine WHERE ordine_id = ?", (ordine_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close(); return jsonify({'capi': capi, 'info': info})
@@ -615,176 +581,85 @@ def get_dettagli_ordine(ordine_id):
 def consegna_items():
     ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); metodo = request.json.get('metodo_pagamento', '')
     conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
-    
     ordine_id = None
     if ids:
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
-        res = cursor.fetchone()
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); res = cursor.fetchone()
         if res: ordine_id = res[0]
-
     for item_id in ids:
         cursor.execute("UPDATE dettagli_ordine SET ritirato = 1 WHERE id = ?", (item_id,)); cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
-    
     msg = "Nessuna stampa."
     if ordine_id:
         if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
-        
         if incasso > 0: 
             if metodo: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
             else: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ? WHERE id = ?", (incasso, ordine_id))
-        
         cursor.execute("SELECT totale, acconto, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
         totale_pagato = (r['acconto'] or 0) + (r['pagamenti_parziali'] or 0)
-        
-        # MODIFICA RICHIESTA: Se c'è acconto, lo scontrino fiscale deve essere per l'intero importo dei capi ritirati
-        has_acconto = (r['acconto'] and r['acconto'] > 0)
-        valore_totale_capi_selezionati = sum(item['prezzo'] for item in capi_ritirati)
-
-        if totale_pagato >= r['totale'] - 0.01: 
-            cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
-            
+        has_acconto = (r['acconto'] and r['acconto'] > 0); valore_totale_capi_selezionati = sum(item['prezzo'] for item in capi_ritirati)
+        if totale_pagato >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
         if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
-        
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,))
-            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,))
-            res_cli = cursor.fetchone()
-            cod_lotteria = res_cli[0] if res_cli else ""
-            
-            # LOGICA FISCALE MODIFICATA
-            # Se c'è un acconto, stampiamo l'intero valore dei capi (così lo scontrino è valido per il totale)
-            # Se NON c'è acconto, stampiamo solo l'incasso reale (il saldo)
-            
-            importo_da_fiscale = incasso
-            items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
-            
-            if has_acconto:
-                 importo_da_fiscale = valore_totale_capi_selezionati
-                 # Passiamo i capi reali per la descrizione dettagliata se possibile, o un generico con il totale pieno
-                 items_da_fiscale = capi_ritirati
-
+            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,)); res_cli = cursor.fetchone(); cod_lotteria = res_cli[0] if res_cli else ""
+            importo_da_fiscale = incasso; items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+            if has_acconto: importo_da_fiscale = valore_totale_capi_selezionati; items_da_fiscale = capi_ritirati
             if importo_da_fiscale > 0:
-                success = stampa_fiscale_vendita(items_da_fiscale, importo_da_fiscale, cod_lotteria)
-                if success: msg = "✅ Scontrino Fiscale Stampato!"
+                if stampa_fiscale_vendita(items_da_fiscale, importo_da_fiscale, cod_lotteria): msg = "✅ Scontrino Fiscale Stampato!"
                 else: msg = "❌ Errore Stampa Fiscale!"
             else: msg = "Importo 0, niente scontrino."
-                
     conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
 @app.route('/salva_ordine', methods=['POST'])
 def salva_ordine():
     d = request.json; listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
-    carrello = d['carrello']
-    data_ritiro_raw = d['data_ritiro']
-    sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0))
-    pagato_bool = d['pagato'] 
-    metodo = d['metodo']
-    is_approx = d.get('is_approx', False)
-    azione = d.get('azione', 'stampa') 
-
+    carrello = d['carrello']; data_ritiro_raw = d['data_ritiro']; sconto, acconto = float(d.get('sconto', 0)), float(d.get('acconto', 0)); pagato_bool = d['pagato']; metodo = d['metodo']; is_approx = d.get('is_approx', False); azione = d.get('azione', 'stampa') 
     dt_obj = datetime.strptime(data_ritiro_raw, "%Y-%m-%d") if "-" in data_ritiro_raw and len(data_ritiro_raw.split("-")[0])==4 else datetime.now()
     data_ritiro_str = dt_obj.strftime("%d/%m") if "-" in data_ritiro_raw else data_ritiro_raw
-    totale = max(0, sum(i['prezzo'] for i in carrello) - sconto)
-    solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
-    
-    if pagato_bool:
-        acconto = totale
-        pagato = True
-    else:
-        if acconto >= totale: 
-            pagato = True
-        else: 
-            pagato = False
-
+    totale = max(0, sum(i['prezzo'] for i in carrello) - sconto); solo_prodotti = all(i['nome'] in listino_vendita for i in carrello)
+    if pagato_bool: acconto = totale; pagato = True
+    else: pagato = True if acconto >= totale else False
     if solo_prodotti: pagato = True; metodo = metodo or "Contanti"; acconto = totale
-    
     conn = get_db(); cursor = conn.cursor()
-    
     cursor.execute("UPDATE clienti SET preferenza_scontrino = ? WHERE id = ?", (azione, d['cliente_id']))
-    
-    cursor.execute("SELECT codice_lotteria FROM clienti WHERE id = ?", (d['cliente_id'],))
-    res_cli = cursor.fetchone()
-    codice_lotteria = res_cli['codice_lotteria'] if res_cli else ""
-
-    last_reset = get_setting("last_reset_date")
-    cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
-    
-    stampa_ora = False
-    contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello)
-    fiscal_always = get_setting("fiscal_always") == "1"
-    
-    if (pagato and metodo == 'Carta'): 
-        stampa_ora = True
-    elif contiene_prodotti or fiscal_always: 
-        stampa_ora = True
-    
+    cursor.execute("SELECT codice_lotteria FROM clienti WHERE id = ?", (d['cliente_id'],)); res_cli = cursor.fetchone(); codice_lotteria = res_cli['codice_lotteria'] if res_cli else ""
+    last_reset = get_setting("last_reset_date"); cursor.execute("SELECT COUNT(*) FROM ordini WHERE data_ingresso > ?", (last_reset,)); nuovo_num = cursor.fetchone()[0] + 1
+    stampa_ora = False; contiene_prodotti = any(i['nome'] in listino_vendita for i in carrello); fiscal_always = get_setting("fiscal_always") == "1"
+    if (pagato and metodo == 'Carta') or contiene_prodotti or fiscal_always: stampa_ora = True
     fiscale_desk_val = 1 if stampa_ora else 0
-    
     cursor.execute("INSERT INTO ordini (num_scontrino, cliente_id, data_ingresso, data_ritiro, totale, sconto, acconto, pagato, fiscale_emesso, fiscale_desk, metodo_pagamento, sede, stato, is_approx_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (nuovo_num, d['cliente_id'], datetime.now(), data_ritiro_str, totale, sconto, acconto, 1 if pagato else 0, 1 if stampa_ora else 0, fiscale_desk_val, metodo, SEDE, 'Consegnato' if solo_prodotti else 'In Lavorazione', 1 if is_approx else 0))
-    oid = cursor.lastrowid
-    stato_lavorazione = 1 if solo_prodotti else 0
-    items_con_id = []
+    oid = cursor.lastrowid; stato_lavorazione = 1 if solo_prodotti else 0; items_con_id = []
     for i in carrello: 
         cursor.execute("INSERT INTO dettagli_ordine (ordine_id, capo, prezzo, ritirato, stato_lavorazione) VALUES (?, ?, ?, ?, ?)", (oid, i['nome'], i['prezzo'], 0 if not solo_prodotti else 1, stato_lavorazione))
         item_id = cursor.lastrowid; capo_con_id = i.copy(); capo_con_id['id'] = item_id; items_con_id.append(capo_con_id)
     conn.commit(); conn.close()
-    
     if stampa_ora:
-        print(f"DEBUG SALVA ORDINE: Invio fiscale di {len(carrello)} elementi.")
-        if pagato:
-            stampa_fiscale_vendita(carrello, totale, codice_lotteria)
-        else:
-            item_acconto = [{'nome': 'Acconto Lavanderia', 'prezzo': acconto}]
-            stampa_fiscale_vendita(item_acconto, acconto, codice_lotteria)
-
+        if pagato: stampa_fiscale_vendita(carrello, totale, codice_lotteria)
+        else: stampa_fiscale_vendita([{'nome': 'Acconto Lavanderia', 'prezzo': acconto}], acconto, codice_lotteria)
     msg_wa = "Nessun invio"
-    
     if not solo_prodotti:
         if azione == 'stampa':
             stampa_scontrino(nuovo_num, datetime.now().strftime("%d/%m %H:%M"), d['cliente_nome'], carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx, codice_lotteria)
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
-        
         elif azione == 'whatsapp':
-            conn = get_db(); cursor = conn.cursor()
-            cursor.execute("SELECT telefono FROM clienti WHERE id = ?", (d['cliente_id'],))
-            res_tel = cursor.fetchone()
-            conn.close()
-            
+            conn = get_db(); cursor = conn.cursor(); cursor.execute("SELECT telefono FROM clienti WHERE id = ?", (d['cliente_id'],)); res_tel = cursor.fetchone(); conn.close()
             telefono = res_tel['telefono'] if res_tel else ""
-            
             if len(telefono) > 5:
                 testo_msg = formatta_scontrino_whatsapp(d['cliente_nome'], nuovo_num, carrello, totale, acconto, data_ritiro_str)
-                nome_file_json = f"ord_{oid}.json"
-                path_json = os.path.join(PATH_WA_OUT, nome_file_json)
-                
+                path_json = os.path.join(PATH_WA_OUT, f"ord_{oid}.json")
                 dati_bot = { "telefono": telefono, "messaggio": urllib.parse.unquote(testo_msg) }
-                
                 if not os.path.exists(PATH_WA_OUT): os.makedirs(PATH_WA_OUT)
                 if not os.path.exists(PATH_WA_ESITI): os.makedirs(PATH_WA_ESITI)
-
                 with open(path_json, 'w', encoding='utf-8') as f: json.dump(dati_bot, f)
-                
-                esito_path = os.path.join(PATH_WA_ESITI, f"ord_{oid}.txt")
-                attesa = 0
-                msg_wa = "⏳ Timeout WhatsApp"
+                esito_path = os.path.join(PATH_WA_ESITI, f"ord_{oid}.txt"); attesa = 0; msg_wa = "⏳ Timeout WhatsApp"
                 while attesa < 100:
                     if os.path.exists(esito_path):
                         with open(esito_path, 'r') as f: esito = f.read()
-                        msg_wa = "✅ WhatsApp Inviato!" if esito == "OK" else "❌ Errore Invio WhatsApp"
-                        try: os.remove(esito_path) 
-                        except: pass
-                        break
-                    time.sleep(0.1)
-                    attesa += 1
-            else:
-                msg_wa = "❌ Cliente senza telefono!"
-            
+                        msg_wa = "✅ WhatsApp Inviato!" if esito == "OK" else "❌ Errore Invio WhatsApp"; os.remove(esito_path); break
+                    time.sleep(0.1); attesa += 1
+            else: msg_wa = "❌ Cliente senza telefono!"
             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
-
-        elif azione == 'email':
-             stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
-            
+        elif azione == 'email': stampa_etichette(nuovo_num, items_con_id, d['cliente_nome'], data_ritiro_str)
     return jsonify({"status": "success", "id_ordine": oid, "msg_wa": msg_wa})
 
 @app.route('/sospendi_ordine', methods=['POST'])
@@ -820,82 +695,39 @@ def get_items_scontrino():
     elif tipo == 'capo':
         cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ? AND ritirato = 0", (valore,)); res = cursor.fetchone()
         if res: order_id = res[0]; target_item_id = int(valore)
-    
     if not order_id: conn.close(); return jsonify({'status': 'error', 'msg': 'Nessun risultato trovato.'})
-    
-    if tipo == 'capo' and target_item_id:
-        cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE id = ?", (target_item_id,))
-    else:
-        cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (order_id,))
-        
+    if tipo == 'capo' and target_item_id: cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE id = ?", (target_item_id,))
+    else: cursor.execute("SELECT id, capo, stato_lavorazione, numero_catena FROM dettagli_ordine WHERE ordine_id = ?", (order_id,))
     capi = [dict(row) for row in cursor.fetchall()]; conn.close()
     return jsonify({'status': 'success', 'items': capi, 'ordine_id': order_id, 'target_item_id': target_item_id})
 
 @app.route('/conferma_pronti', methods=['POST'])
 def conferma_pronti():
-    ids = request.json.get('ids', [])
-    oid = request.json.get('ordine_id')
-    catena_input = request.json.get('catena', '').strip()
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
+    ids = request.json.get('ids', []); oid = request.json.get('ordine_id'); catena_input = request.json.get('catena', '').strip(); conn = get_db(); cursor = conn.cursor()
     if catena_input and ids:
         nuovi_numeri = parse_catena_range(catena_input)
-        if not nuovi_numeri:
-            pass 
-        else:
+        if nuovi_numeri:
             placeholders = ','.join(['?']*len(ids))
             cursor.execute(f"SELECT DISTINCT tipo_stoccaggio FROM dettagli_ordine WHERE id IN ({placeholders})", ids)
             types = [row[0] for row in cursor.fetchall()]
-            
             for t in types:
-                cursor.execute("""
-                    SELECT DISTINCT d.numero_catena, o.num_scontrino 
-                    FROM dettagli_ordine d 
-                    JOIN ordini o ON d.ordine_id = o.id 
-                    WHERE d.tipo_stoccaggio = ? 
-                      AND d.ritirato = 0 
-                      AND d.ordine_id != ? 
-                      AND d.numero_catena != ''
-                """, (t, oid))
-                
+                cursor.execute("""SELECT DISTINCT d.numero_catena, o.num_scontrino FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE d.tipo_stoccaggio = ? AND d.ritirato = 0 AND d.ordine_id != ? AND d.numero_catena != ''""", (t, oid))
                 rows = cursor.fetchall()
                 for row in rows:
-                    catena_db = row['numero_catena']
-                    num_scontrino = row['num_scontrino']
-                    
-                    numeri_esistenti = parse_catena_range(catena_db)
-                    
-                    if not nuovi_numeri.isdisjoint(numeri_esistenti):
-                          conn.close()
-                          return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena_input} OCCUPATA (Conflitto con {catena_db} - Ordine #{num_scontrino})!"})
-
-    if ids:
-        pl = ','.join(['?']*len(ids))
-        cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena_input] + ids)
-    else: 
-        cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
-    
-    conn.commit()
-    conn.close()
-    return jsonify({'status': 'success'})
+                    numeri_esistenti = parse_catena_range(row['numero_catena'])
+                    if not nuovi_numeri.isdisjoint(numeri_esistenti): conn.close(); return jsonify({'status': 'error', 'msg': f"⛔ POSIZIONE {catena_input} OCCUPATA (Conflitto con {row['numero_catena']} - Ordine #{row['num_scontrino']})!"})
+    if ids: pl = ','.join(['?']*len(ids)); cursor.execute(f"UPDATE dettagli_ordine SET stato_lavorazione = 1, numero_catena = ? WHERE id IN ({pl})", [catena_input] + ids)
+    else: cursor.execute("UPDATE dettagli_ordine SET stato_lavorazione = 0, numero_catena = '' WHERE ordine_id = ?", (oid,))
+    conn.commit(); conn.close(); return jsonify({'status': 'success'})
 
 @app.route('/api/stampa_riepilogo', methods=['POST'])
 def api_stampa_riepilogo():
     try:
-        oid = request.json.get('ordine_id')
-        conn = get_db(); cursor = conn.cursor()
-        cursor.execute("SELECT o.num_scontrino, o.data_ritiro, c.nome, c.cognome FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE o.id = ?", (oid,))
-        res = cursor.fetchone()
-        conn.close()
-        
+        oid = request.json.get('ordine_id'); conn = get_db(); cursor = conn.cursor()
+        cursor.execute("SELECT o.num_scontrino, o.data_ritiro, c.nome, c.cognome FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE o.id = ?", (oid,)); res = cursor.fetchone(); conn.close()
         if not res: return jsonify({'status': 'error', 'msg': 'Ordine non trovato'})
-        
         nome_completo = f"{res['nome']} {res['cognome'] or ''}".strip()
-        ok = stampa_riepilogo_ordine_printer(res['num_scontrino'], nome_completo, res['data_ritiro'])
-        
-        if ok: return jsonify({'status': 'success', 'msg': 'Riepilogo stampato!'})
+        if stampa_riepilogo_ordine_printer(res['num_scontrino'], nome_completo, res['data_ritiro']): return jsonify({'status': 'success', 'msg': 'Riepilogo stampato!'})
         else: return jsonify({'status': 'error', 'msg': 'Errore stampa riepilogo'})
     except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
 
@@ -949,77 +781,50 @@ def api_test_print():
 
 @app.route('/api/toggle_stato_pagamento', methods=['POST'])
 def toggle_stato_pagamento():
-    oid = request.json.get('ordine_id')
-    conn = get_db(); cursor = conn.cursor()
-    cursor.execute("SELECT pagato, totale FROM ordini WHERE id = ?", (oid,))
-    res = cursor.fetchone()
+    oid = request.json.get('ordine_id'); conn = get_db(); cursor = conn.cursor()
+    cursor.execute("SELECT pagato, totale FROM ordini WHERE id = ?", (oid,)); res = cursor.fetchone()
     if res:
-        currentState = res['pagato']
-        if currentState == 1:
-            nuovo_stato = 0
-            cursor.execute("SELECT SUM(prezzo) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 1", (oid,))
-            valore_ritirati = cursor.fetchone()[0] or 0.0
-            nuovo_acconto = valore_ritirati 
-        else:
-            nuovo_stato = 1
-            nuovo_acconto = res['totale']
-
+        nuovo_stato = 0 if res['pagato'] == 1 else 1
+        cursor.execute("SELECT SUM(prezzo) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 1", (oid,)); valore_ritirati = cursor.fetchone()[0] or 0.0
+        nuovo_acconto = valore_ritirati if nuovo_stato == 0 else res['totale']
         cursor.execute("UPDATE ordini SET pagato = ?, acconto = ? WHERE id = ?", (nuovo_stato, nuovo_acconto, oid))
         conn.commit()
-    conn.close()
-    return jsonify({'status': 'success'})
+    conn.close(); return jsonify({'status': 'success'})
 
 @app.route('/api/stampa_etichetta_singola', methods=['POST'])
 def stampa_etichetta_singola():
     try:
-        d = request.json
-        capo_id = d.get('capo_id')
-        conn = get_db(); cursor = conn.cursor()
-        cursor.execute("SELECT * FROM dettagli_ordine WHERE id = ?", (capo_id,))
-        capo = cursor.fetchone()
+        d = request.json; capo_id = d.get('capo_id'); conn = get_db(); cursor = conn.cursor()
+        cursor.execute("SELECT * FROM dettagli_ordine WHERE id = ?", (capo_id,)); capo = cursor.fetchone()
         if not capo: return jsonify({'status': 'error', 'msg': 'Capo non trovato'})
-        cursor.execute("SELECT * FROM ordini WHERE id = ?", (capo['ordine_id'],))
-        ordine = cursor.fetchone()
-        cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
-        cliente = cursor.fetchone()
+        cursor.execute("SELECT * FROM ordini WHERE id = ?", (capo['ordine_id'],)); ordine = cursor.fetchone()
+        cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],)); cliente = cursor.fetchone()
         cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
-        conn.close()
-        item_obj = {'id': capo['id'], 'nome': capo['capo']}
-        ok = stampa_etichette(ordine['num_scontrino'], [item_obj], cliente_nome, ordine['data_ritiro'])
-        if ok: return jsonify({'status': 'success', 'msg': 'Etichetta singola stampata!'})
+        conn.close(); item_obj = {'id': capo['id'], 'nome': capo['capo']}
+        if stampa_etichette(ordine['num_scontrino'], [item_obj], cliente_nome, ordine['data_ritiro']): return jsonify({'status': 'success', 'msg': 'Etichetta singola stampata!'})
         else: return jsonify({'status': 'error', 'msg': 'Errore durante la stampa'})
     except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
 
 @app.route('/api/ristampa_ordine', methods=['POST'])
 def ristampa_ordine():
     try:
-        d = request.json
-        oid = d.get('id')
-        tipo = d.get('tipo') 
+        d = request.json; oid = d.get('id'); tipo = d.get('tipo') 
         conn = get_db(); cursor = conn.cursor()
-        cursor.execute("SELECT * FROM ordini WHERE id = ?", (oid,))
-        ordine = cursor.fetchone()
+        cursor.execute("SELECT * FROM ordini WHERE id = ?", (oid,)); ordine = cursor.fetchone()
         if not ordine: return jsonify({'status': 'error', 'msg': 'Ordine non trovato'})
-        cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],))
-        cliente = cursor.fetchone()
-        cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip()
-        codice_lotteria = cliente['codice_lotteria'] if cliente and cliente['codice_lotteria'] else ""
-        cursor.execute("SELECT id, capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id = ?", (oid,))
-        carrello = [dict(row) for row in cursor.fetchall()]
-        is_approx = False
+        cursor.execute("SELECT * FROM clienti WHERE id = ?", (ordine['cliente_id'],)); cliente = cursor.fetchone()
+        cliente_nome = f"{cliente['nome']} {cliente['cognome'] or ''}".strip(); codice_lotteria = cliente['codice_lotteria'] if cliente and cliente['codice_lotteria'] else ""
+        cursor.execute("SELECT id, capo as nome, prezzo FROM dettagli_ordine WHERE ordine_id = ?", (oid,)); carrello = [dict(row) for row in cursor.fetchall()]
+        is_approx = False; 
         if 'is_approx_date' in ordine.keys(): is_approx = (ordine['is_approx_date'] == 1)
         conn.close()
-        
         if tipo == 'scontrino':
             totale = ordine['totale']; sconto = ordine['sconto']; acconto = ordine['acconto']; pagato = (ordine['pagato'] == 1); metodo = ordine['metodo_pagamento'] or "Contanti"
             data_ingresso_str = datetime.strptime(ordine['data_ingresso'].split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m %H:%M")
-            ok = stampa_scontrino(ordine['num_scontrino'], data_ingresso_str, cliente_nome, carrello, totale, sconto, acconto, ordine['data_ritiro'], pagato, metodo, is_approx, codice_lotteria)
-            if ok: return jsonify({'status': 'success', 'msg': 'Scontrino inviato alla stampante!'})
+            if stampa_scontrino(ordine['num_scontrino'], data_ingresso_str, cliente_nome, carrello, totale, sconto, acconto, ordine['data_ritiro'], pagato, metodo, is_approx, codice_lotteria): return jsonify({'status': 'success', 'msg': 'Scontrino inviato alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa scontrino'})
-            
         elif tipo == 'etichette':
-            ok = stampa_etichette(ordine['num_scontrino'], carrello, cliente_nome, ordine['data_ritiro'])
-            if ok: return jsonify({'status': 'success', 'msg': 'Etichette inviate alla stampante!'})
+            if stampa_etichette(ordine['num_scontrino'], carrello, cliente_nome, ordine['data_ritiro']): return jsonify({'status': 'success', 'msg': 'Etichette inviate alla stampante!'})
             else: return jsonify({'status': 'error', 'msg': 'Errore stampa etichette'})
         return jsonify({'status': 'error', 'msg': 'Tipo stampa non valido'})
     except Exception as e: return jsonify({'status': 'error', 'msg': str(e)})
@@ -1036,156 +841,40 @@ def storico_cliente(cliente_id):
         storico[oid]['capi'].append({'capo': r['capo'], 'prezzo': r['prezzo']})
     return jsonify(list(storico.values()))
 
-# --- NUOVA API STATISTICHE AGGIORNATA ---
 @app.route('/api/get_stats')
 def api_get_stats():
-    # FILTRO DATE
-    start_date = request.args.get('start', '2000-01-01')
-    end_date_raw = request.args.get('end', '2100-01-01')
-    
+    start_date = request.args.get('start', '2000-01-01'); end_date_raw = request.args.get('end', '2100-01-01')
     conn = get_db(); cursor = conn.cursor()
-    
     daily_stats = defaultdict(lambda: {'items': 0, 'revenue': 0.0, 'fiscal': 0})
-    cursor.execute("""
-        SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi 
-        FROM ordini o 
-        JOIN dettagli_ordine d ON o.id = d.ordine_id 
-        WHERE date(o.data_ingresso) BETWEEN ? AND ?
-        GROUP BY date(o.data_ingresso)
-    """, (start_date, end_date_raw))
-    for r in cursor.fetchall():
-        daily_stats[r['data']]['items'] = r['tot_capi']
-
-    cursor.execute("""
-        SELECT date(data_ingresso) as data, SUM(totale) as tot_incasso, SUM(CASE WHEN fiscale_emesso = 1 THEN 1 ELSE 0 END) as tot_fiscali
-        FROM ordini
-        WHERE date(data_ingresso) BETWEEN ? AND ?
-        GROUP BY date(data_ingresso)
-    """, (start_date, end_date_raw))
+    cursor.execute("""SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY date(o.data_ingresso)""", (start_date, end_date_raw))
+    for r in cursor.fetchall(): daily_stats[r['data']]['items'] = r['tot_capi']
+    cursor.execute("""SELECT date(data_ingresso) as data, SUM(totale) as tot_incasso, SUM(CASE WHEN fiscale_emesso = 1 THEN 1 ELSE 0 END) as tot_fiscali FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ? GROUP BY date(data_ingresso)""", (start_date, end_date_raw))
     for r in cursor.fetchall():
         daily_stats[r['data']]['revenue'] = r['tot_incasso'] if r['tot_incasso'] else 0.0
         daily_stats[r['data']]['fiscal'] = r['tot_fiscali'] if r['tot_fiscali'] else 0
-
     trend_daily = []
-    sorted_dates = sorted(daily_stats.keys())
-    for d in sorted_dates:
-        trend_daily.append({
-            'data': d,
-            'items': daily_stats[d]['items'],
-            'revenue': daily_stats[d]['revenue'],
-            'fiscal': daily_stats[d]['fiscal']
-        })
-
-    cursor.execute("""
-        SELECT d.capo, count(d.id) as qty 
-        FROM dettagli_ordine d 
-        JOIN ordini o ON d.ordine_id = o.id
-        WHERE date(o.data_ingresso) BETWEEN ? AND ?
-        GROUP BY d.capo 
-        ORDER BY qty DESC 
-        LIMIT 10
-    """, (start_date, end_date_raw))
+    for d in sorted(daily_stats.keys()): trend_daily.append({'data': d, 'items': daily_stats[d]['items'], 'revenue': daily_stats[d]['revenue'], 'fiscal': daily_stats[d]['fiscal']})
+    cursor.execute("""SELECT d.capo, count(d.id) as qty FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY d.capo ORDER BY qty DESC LIMIT 10""", (start_date, end_date_raw))
     top_items = [dict(row) for row in cursor.fetchall()]
-    
-    cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
-    fiscal_count = cursor.fetchone()[0]
-
-    cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
-    fiscal_value = cursor.fetchone()[0] or 0.0
-
-    cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw))
-    total_revenue = cursor.fetchone()[0] or 0.0
-
-    cursor.execute("""
-        SELECT COUNT(d.id) 
-        FROM dettagli_ordine d 
-        JOIN ordini o ON d.ordine_id = o.id 
-        WHERE date(o.data_ingresso) BETWEEN ? AND ?
-    """, (start_date, end_date_raw))
-    capi_entrati_period = cursor.fetchone()[0] or 0
-
+    cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); fiscal_count = cursor.fetchone()[0]
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); fiscal_value = cursor.fetchone()[0] or 0.0
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); total_revenue = cursor.fetchone()[0] or 0.0
+    cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); capi_entrati_period = cursor.fetchone()[0] or 0
     params_clients = (start_date, end_date_raw, start_date, end_date_raw)
-    cursor.execute("""
-        SELECT c.nome, c.cognome, SUM(o.totale) as total_spent,
-        (SELECT COUNT(d.id) FROM dettagli_ordine d 
-         JOIN ordini o2 ON d.ordine_id = o2.id 
-         WHERE o2.cliente_id = c.id AND date(o2.data_ingresso) BETWEEN ? AND ?) as total_items
-        FROM ordini o JOIN clienti c ON o.cliente_id = c.id
-        WHERE date(o.data_ingresso) BETWEEN ? AND ?
-        GROUP BY c.id ORDER BY total_spent DESC LIMIT 10
-    """, params_clients)
+    cursor.execute("""SELECT c.nome, c.cognome, SUM(o.totale) as total_spent, (SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o2 ON d.ordine_id = o2.id WHERE o2.cliente_id = c.id AND date(o2.data_ingresso) BETWEEN ? AND ?) as total_items FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY c.id ORDER BY total_spent DESC LIMIT 10""", params_clients)
     top_clients = [dict(row) for row in cursor.fetchall()]
-
-    cursor.execute("""
-        SELECT SUM(CASE WHEN d.ritirato = 1 THEN 1 ELSE 0 END) as ritirati
-        FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id
-        WHERE date(o.data_ingresso) BETWEEN ? AND ?
-    """, (start_date, end_date_raw))
-    row_ritiri = cursor.fetchone()
-    capi_ritirati = row_ritiri[0] or 0
-
-    cursor.execute("""
-        SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati,
-               SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare
-        FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?
-    """, (start_date, end_date_raw))
-    row_pagamenti = cursor.fetchone()
-    ordini_pagati = row_pagamenti[0] or 0
-    ordini_da_pagare = row_pagamenti[1] or 0
-
-    cursor.execute("""
-        SELECT COUNT(*) FROM ordini 
-        WHERE fiscale_emesso = 1 AND stato = 'Consegnato' 
-        AND date(data_ingresso) BETWEEN ? AND ?
-    """, (start_date, end_date_raw))
-    scontrini_prodotti = cursor.fetchone()[0]
-
-    cursor.execute("""
-        SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso
-        FROM dettagli_ordine d
-        JOIN ordini o ON d.ordine_id = o.id
-        JOIN clienti c ON o.cliente_id = c.id
-        WHERE d.ritirato = 1
-        AND date(o.data_ingresso) BETWEEN ? AND ?
-        ORDER BY c.nome, c.cognome
-    """, (start_date, end_date_raw))
-    
-    raw_ritirati = cursor.fetchall()
-    ritirati_by_client = defaultdict(list)
-    for r in raw_ritirati:
-        nome_completo = f"{r['nome']} {r['cognome'] or ''}".strip()
-        ritirati_by_client[nome_completo].append({
-            'capo': r['capo'],
-            'prezzo': r['prezzo'],
-            'data': r['data_ingresso']
-        })
-    
-    ritirati_dettaglio = []
-    for cliente, items in ritirati_by_client.items():
-        ritirati_dettaglio.append({'cliente': cliente, 'items': items})
-    
-    ritirati_dettaglio.sort(key=lambda x: x['cliente'])
-
-    conn.close()
-    
-    return jsonify({
-        'trend_daily': trend_daily, 
-        'top_items': top_items,
-        'ritirati_dettaglio': ritirati_dettaglio,
-        'stats': {
-            'fiscal_count': fiscal_count,
-            'fiscal_value': fiscal_value,
-            'total_revenue': total_revenue,
-            'top_clients': top_clients,
-            'capi_ritirati': capi_ritirati,
-            'capi_totali': capi_entrati_period, 
-            'ordini_pagati': ordini_pagati,
-            'ordini_da_pagare': ordini_da_pagare,
-            'scontrini_prodotti': scontrini_prodotti
-        }
-    })
+    cursor.execute("""SELECT SUM(CASE WHEN d.ritirato = 1 THEN 1 ELSE 0 END) as ritirati FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_ritiri = cursor.fetchone(); capi_ritirati = row_ritiri[0] or 0
+    cursor.execute("""SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati, SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_pagamenti = cursor.fetchone(); ordini_pagati = row_pagamenti[0] or 0; ordini_da_pagare = row_pagamenti[1] or 0
+    cursor.execute("""SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND stato = 'Consegnato' AND date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); scontrini_prodotti = cursor.fetchone()[0]
+    cursor.execute("""SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ? ORDER BY c.nome, c.cognome""", (start_date, end_date_raw))
+    raw_ritirati = cursor.fetchall(); ritirati_by_client = defaultdict(list)
+    for r in raw_ritirati: ritirati_by_client[f"{r['nome']} {r['cognome'] or ''}".strip()].append({'capo': r['capo'], 'prezzo': r['prezzo'], 'data': r['data_ingresso']})
+    ritirati_dettaglio = []; 
+    for cliente, items in ritirati_by_client.items(): ritirati_dettaglio.append({'cliente': cliente, 'items': items})
+    ritirati_dettaglio.sort(key=lambda x: x['cliente']); conn.close()
+    return jsonify({'trend_daily': trend_daily, 'top_items': top_items, 'ritirati_dettaglio': ritirati_dettaglio, 'stats': {'fiscal_count': fiscal_count, 'fiscal_value': fiscal_value, 'total_revenue': total_revenue, 'top_clients': top_clients, 'capi_ritirati': capi_ritirati, 'capi_totali': capi_entrati_period, 'ordini_pagati': ordini_pagati, 'ordini_da_pagare': ordini_da_pagare, 'scontrini_prodotti': scontrini_prodotti}})
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.8.0 (Stats Enhanced) ---")
+    print("--- AVVIO WASHIFY V.1.8.5 (Remote Mag) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
