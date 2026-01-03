@@ -28,7 +28,7 @@ DB_NAME = "lavanderia.db"
 REMOTE_URL = "https://www.lavanderiaigea.com/api_magazzino.php" 
 REMOTE_SECRET = "WASHIFY_SECURE_KEY" 
 
-# --- CONFIGURAZIONE WHATSAPP (CARTELLA SCAMBIO) ---
+# --- CONFIGURAZIONE WHATSAPP ---
 PATH_WA_OUT = r"C:\Washify_Whatsapp\Da_Inviare"
 PATH_WA_ESITI = r"C:\Washify_Whatsapp\Esiti"
 
@@ -98,7 +98,6 @@ def init_db():
     try: cursor.execute("SELECT pagamenti_parziali FROM ordini LIMIT 1")
     except: cursor.execute("ALTER TABLE ordini ADD COLUMN pagamenti_parziali REAL DEFAULT 0")
 
-    # --- NUOVA COLONNA PER DATA RITIRO EFFETTIVO (PER STORICO) ---
     try: cursor.execute("SELECT data_ritiro_effettivo FROM dettagli_ordine LIMIT 1")
     except: cursor.execute("ALTER TABLE dettagli_ordine ADD COLUMN data_ritiro_effettivo TEXT DEFAULT ''")
 
@@ -113,7 +112,7 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                     
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                      
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
@@ -157,18 +156,7 @@ def get_listino_dict():
         listino_dict[row['categoria']][row['capo']] = row['prezzo']
     return listino_dict
 
-# --- GESTIONE STAMPANTE FISCALE ---
-def flush_socket_aggressive(s):
-    s.settimeout(0.2) 
-    try:
-        while True:
-            data = s.recv(4096)
-            if not data: break
-    except socket.timeout:
-        pass 
-    except Exception as e:
-        print(f"   [FLUSH ERROR] {e}")
-
+# --- GESTIONE STAMPANTE FISCALE (CUSTOM KUBE) ---
 def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
     ip = get_setting("ip_fiscal")
     if not ip:
@@ -180,54 +168,87 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
     s = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        s.settimeout(5)
+        s.settimeout(10) # Timeout leggermente aumentato per sicurezza
         
-        print("1. Connessione alla stampante...")
-        s.connect((ip, 9100))
-        s.sendall(b'\x1b\x40') 
-        time.sleep(0.5)
+        try:
+            print("1. Connessione...")
+            s.connect((ip, 9100))
+        except OSError as e:
+            print(f"ERRORE CONNESSIONE: {e}")
+            return False
 
+        # --- FASE 1: SBLOCCO ---
+        print("2. Esecuzione Reset...")
+        s.sendall(b'\x1b@') # Reset Hardware
+        time.sleep(0.1)
+        s.sendall(b'C\r\n') # Clear Tasto C
+        time.sleep(0.1) 
+        s.sendall(b'1A\r\n') # Annulla Scontrino
+        time.sleep(0.5) 
+
+        # --- FASE 2: STAMPA DATI ---
+        print("3. Invio Nuovi Dati...")
+        
         for item in items:
-            nome_raw = str(item['nome']).replace('"', '').replace("'", "")
-            desc = nome_raw[:20]
+            nome_raw = str(item['nome']).replace('"', '').replace("'", "").strip()
+            desc = nome_raw[:22] 
+            if not desc: desc = "Reparto 1"
+
             try: valore = float(item['prezzo'])
             except: valore = 0.0
-            prezzo_str = f"{valore:.2f}".replace('.', ',')
-            comando = f'"{desc}"1*{prezzo_str}1R\r\n'
-            print(f"   -> Riga inviata: {comando.strip()}")
-            s.sendall(comando.encode('cp858', errors='ignore'))
-            time.sleep(0.1)
+            
+            if valore < 0.00: continue
+
+            prezzo_str = f"{valore:.2f}"
+            
+            # Comando Corretto: "Descrizione"PrezzoH1R
+            # H = Vendita Reparto, 1 = Num Reparto, R = Registra
+            comando = f'"{desc}"{prezzo_str}H1R\r\n'
+            
+            s.sendall(comando.encode('latin1', errors='ignore'))
+            
+            # --- MODIFICA CRITICA: PAUSA PER IL BUFFER ---
+            # Senza questa pausa, se mandi 10 capi, la stampante si "strozza" e taglia lo scontrino a metà.
+            time.sleep(0.15) 
 
         if codice_lotteria:
             cmd_lotteria = f"C{codice_lotteria.upper()}\r\n"
-            s.sendall(cmd_lotteria.encode('cp858'))
-            time.sleep(0.2)
+            s.sendall(cmd_lotteria.encode('latin1'))
+            time.sleep(0.15)
         
-        print("3. Chiusura scontrino (1T)...")
+        # --- FASE 3: CHIUSURA ---
+        print("4. Chiusura Scontrino (1T)...")
         s.sendall(b"1T\r\n")
-        time.sleep(1.5)
-        try: s.shutdown(socket.SHUT_RDWR)
-        except: pass
+        
+        time.sleep(1.0) # Attesa chiusura
         s.close()
         print("--- STAMPA COMPLETATA ---")
         return True
         
     except Exception as e:
         print(f"ERRORE CRITICO STAMPA: {e}")
-        if s: s.close()
+        if s: 
+            try: s.close()
+            except: pass
         return False
 
 def esegui_chiusura_fiscale():
     ip = get_setting("ip_fiscal")
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(10)
         s.connect((ip, 9100))
-        s.sendall(b'\x1b\x40')
-        time.sleep(1)
-        s.sendall(b"1F\r\n")
-        time.sleep(2)
+        
+        s.sendall(b'\x1b@') 
+        time.sleep(0.1)
+        s.sendall(b'C\r\n') 
+        time.sleep(0.1)
+        s.sendall(b"1A\r\n") 
+        time.sleep(0.5)
+        
+        s.sendall(b"1F\r\n") # Chiusura
+        time.sleep(2.0)
+        
         s.close()
         return True, "Chiusura Inviata!"
     except Exception as e: return False, f"Errore: {str(e)}"
@@ -575,7 +596,6 @@ def cerca_ordini_aperti():
         d['residuo'] = max(0, d['totale'] - (d['acconto'] or 0) - (d['pagamenti_parziali'] or 0))
         d['tutto_pronto'] = (d['non_pronti'] == 0)
         
-        # --- MODIFICA RICHIESTA: FORMATTAZIONE DATA INGRESSO PER RICONSEGNA ---
         try:
             d['data_ingresso_str'] = datetime.strptime(str(d['data_ingresso']).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
         except:
@@ -603,7 +623,6 @@ def consegna_items():
         cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); res = cursor.fetchone()
         if res: ordine_id = res[0]
     
-    # --- MODIFICA: Aggiornamento data_ritiro_effettivo ---
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for item_id in ids:
         cursor.execute("UPDATE dettagli_ordine SET ritirato = 1, data_ritiro_effettivo = ? WHERE id = ?", (now_str, item_id))
@@ -624,8 +643,21 @@ def consegna_items():
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,))
             cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,)); res_cli = cursor.fetchone(); cod_lotteria = res_cli[0] if res_cli else ""
-            importo_da_fiscale = incasso; items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
-            if has_acconto: importo_da_fiscale = valore_totale_capi_selezionati; items_da_fiscale = capi_ritirati
+            
+            # --- MODIFICA LOGICA DESCRIZIONE ---
+            importo_da_fiscale = incasso
+            
+            # Default
+            items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+
+            # Se l'importo che pago ora è UGUALE alla somma dei capi, stampo i capi dettagliati
+            if abs(incasso - valore_totale_capi_selezionati) < 0.05:
+                items_da_fiscale = capi_ritirati
+            # Oppure se c'era un acconto e sto saldando (o ritirando tutto), uso i capi (logica precedente)
+            elif has_acconto:
+                items_da_fiscale = capi_ritirati
+                importo_da_fiscale = valore_totale_capi_selezionati
+            
             if importo_da_fiscale > 0:
                 if stampa_fiscale_vendita(items_da_fiscale, importo_da_fiscale, cod_lotteria): msg = "✅ Scontrino Fiscale Stampato!"
                 else: msg = "❌ Errore Stampa Fiscale!"
@@ -854,7 +886,6 @@ def ristampa_ordine():
 @app.route('/api/storico_cliente/<int:cliente_id>')
 def storico_cliente(cliente_id):
     conn = get_db(); cursor = conn.cursor()
-    # --- MODIFICA: Recupero data_ingresso ---
     cursor.execute("""SELECT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, d.capo, d.prezzo, 
                       (SELECT MAX(data_ritiro_effettivo) FROM dettagli_ordine WHERE ordine_id = o.id) as data_effettiva 
                       FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id 
@@ -866,7 +897,6 @@ def storico_cliente(cliente_id):
         oid = r['id']
         if oid not in storico: 
             d_eff = r['data_effettiva']
-            # --- MODIFICA RICHIESTA: FORMATTAZIONE GIORNO/MESE/ANNO ---
             if d_eff:
                 try:
                     d_eff = datetime.strptime(str(d_eff).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
@@ -942,7 +972,6 @@ def api_get_stats():
     cursor.execute("""SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati, SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_pagamenti = cursor.fetchone(); ordini_pagati = row_pagamenti[0] or 0; ordini_da_pagare = row_pagamenti[1] or 0
     cursor.execute("""SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND stato = 'Consegnato' AND date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); scontrini_prodotti = cursor.fetchone()[0]
     
-    # --- MODIFICA: FILTRO RICERCA PER CAPI RITIRATI ---
     sql_ritirati = """SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso, d.data_ritiro_effettivo 
                       FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id 
                       WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ?"""
@@ -989,5 +1018,5 @@ def api_get_stats():
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.1.9.0 (Riconsegna Data Effettiva + Stats Search + Stampa Mod) ---")
+    print("--- AVVIO WASHIFY V.3.6 (Fixed Fiscal Delay & Names) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
