@@ -168,7 +168,7 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
     s = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10) # Timeout leggermente aumentato per sicurezza
+        s.settimeout(10) # Timeout sicuro
         
         try:
             print("1. Connessione...")
@@ -207,8 +207,8 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
             
             s.sendall(comando.encode('latin1', errors='ignore'))
             
-            # --- MODIFICA CRITICA: PAUSA PER IL BUFFER ---
-            # Senza questa pausa, se mandi 10 capi, la stampante si "strozza" e taglia lo scontrino a metà.
+            # --- PAUSA BUFFER FONDAMENTALE ---
+            # Senza questa pausa, se mandi 10 capi, la stampante si "strozza" e taglia lo scontrino.
             time.sleep(0.15) 
 
         if codice_lotteria:
@@ -220,7 +220,7 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
         print("4. Chiusura Scontrino (1T)...")
         s.sendall(b"1T\r\n")
         
-        time.sleep(1.0) # Attesa chiusura
+        time.sleep(1.0) 
         s.close()
         print("--- STAMPA COMPLETATA ---")
         return True
@@ -616,53 +616,111 @@ def get_dettagli_ordine(ordine_id):
 
 @app.route('/consegna_items', methods=['POST'])
 def consegna_items():
-    ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); metodo = request.json.get('metodo_pagamento', '')
-    conn = get_db(); cursor = conn.cursor(); capi_ritirati = []
+    ids = request.json.get('ids', [])
+    incasso = float(request.json.get('incasso', 0))
+    sconto_extra = float(request.json.get('sconto_extra', 0))
+    richiesta_fiscale = request.json.get('stampa_fiscale', False)
+    metodo = request.json.get('metodo_pagamento', '')
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    capi_ritirati = []
     ordine_id = None
+    
     if ids:
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); res = cursor.fetchone()
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
+        res = cursor.fetchone()
         if res: ordine_id = res[0]
     
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Aggiorno stato ritirato
     for item_id in ids:
         cursor.execute("UPDATE dettagli_ordine SET ritirato = 1, data_ritiro_effettivo = ? WHERE id = ?", (now_str, item_id))
-        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
+        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,))
+        capi_ritirati.append(dict(cursor.fetchone()))
     
     msg = "Nessuna stampa."
+    
     if ordine_id:
-        if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
+        # Aggiorno i totali dell'ordine
+        if sconto_extra > 0:
+            cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
+        
         if incasso > 0: 
-            if metodo: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
-            else: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ? WHERE id = ?", (incasso, ordine_id))
-        cursor.execute("SELECT totale, acconto, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
+            if metodo:
+                cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
+            else:
+                cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ? WHERE id = ?", (incasso, ordine_id))
+        
+        # Controllo se l'ordine è saldato
+        cursor.execute("SELECT totale, acconto, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,))
+        r = cursor.fetchone()
         totale_pagato = (r['acconto'] or 0) + (r['pagamenti_parziali'] or 0)
-        has_acconto = (r['acconto'] and r['acconto'] > 0); valore_totale_capi_selezionati = sum(item['prezzo'] for item in capi_ritirati)
-        if totale_pagato >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
+        
+        if totale_pagato >= r['totale'] - 0.01:
+            cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
+        
+        # Controllo se tutto l'ordine è stato consegnato
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
-        if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
+            
+        # --- GESTIONE STAMPA FISCALE ---
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,))
-            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,)); res_cli = cursor.fetchone(); cod_lotteria = res_cli[0] if res_cli else ""
+            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,))
+            res_cli = cursor.fetchone()
+            cod_lotteria = res_cli[0] if res_cli else ""
             
-            # --- MODIFICA LOGICA DESCRIZIONE ---
-            importo_da_fiscale = incasso
+            valore_totale_capi_selezionati = sum(item['prezzo'] for item in capi_ritirati)
             
-            # Default
-            items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+            # LOGICA IMPORTI
+            if incasso <= 0.01:
+                # Caso TOTALE A ZERO (Sconto 100% o già pagato)
+                msg = "Importo €0.00: Merce scaricata, niente scontrino fiscale."
+            
+            else:
+                items_da_fiscale = []
+                
+                # CASO 1: L'incasso combacia con la somma dei prezzi (Nessuno sconto extra)
+                if abs(incasso - valore_totale_capi_selezionati) < 0.05:
+                    items_da_fiscale = capi_ritirati
+                
+                # CASO 2: C'è uno sconto (L'incasso è minore del valore dei capi)
+                # Dobbiamo riproporzionare i prezzi per mantenere i nomi dei capi
+                elif valore_totale_capi_selezionati > 0:
+                    fattore_sconto = incasso / valore_totale_capi_selezionati
+                    running_total = 0.0
+                    
+                    for i, item in enumerate(capi_ritirati):
+                        # Calcolo nuovo prezzo scontato per il singolo capo
+                        nuovo_prezzo = round(item['prezzo'] * fattore_sconto, 2)
+                        
+                        # Fix arrotondamento sull'ultimo elemento per far tornare il totale esatto al centesimo
+                        if i == len(capi_ritirati) - 1:
+                            nuovo_prezzo = incasso - running_total
+                            if nuovo_prezzo < 0: nuovo_prezzo = 0 
+                        
+                        running_total += nuovo_prezzo
+                        
+                        items_da_fiscale.append({
+                            'nome': item['nome'],
+                            'prezzo': nuovo_prezzo
+                        })
+                else:
+                    # Fallback generico (molto raro)
+                    items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+                
+                # Invio alla stampante
+                if stampa_fiscale_vendita(items_da_fiscale, incasso, cod_lotteria):
+                    msg = "✅ Scontrino Fiscale Stampato!"
+                else:
+                    msg = "❌ Errore Stampa Fiscale!"
 
-            # Se l'importo che pago ora è UGUALE alla somma dei capi, stampo i capi dettagliati
-            if abs(incasso - valore_totale_capi_selezionati) < 0.05:
-                items_da_fiscale = capi_ritirati
-            # Oppure se c'era un acconto e sto saldando (o ritirando tutto), uso i capi (logica precedente)
-            elif has_acconto:
-                items_da_fiscale = capi_ritirati
-                importo_da_fiscale = valore_totale_capi_selezionati
-            
-            if importo_da_fiscale > 0:
-                if stampa_fiscale_vendita(items_da_fiscale, importo_da_fiscale, cod_lotteria): msg = "✅ Scontrino Fiscale Stampato!"
-                else: msg = "❌ Errore Stampa Fiscale!"
-            else: msg = "Importo 0, niente scontrino."
-    conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'msg': msg})
 
 @app.route('/salva_ordine', methods=['POST'])
 def salva_ordine():
@@ -1018,5 +1076,5 @@ def api_get_stats():
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.3.6 (Fixed Fiscal Delay & Names) ---")
+    print("--- AVVIO WASHIFY V.3.7 (Zero-Amount & Discount Fix) ---")
     app.run(debug=True, host='0.0.0.0', port=5000)
