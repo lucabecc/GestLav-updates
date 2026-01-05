@@ -12,11 +12,13 @@ import urllib.parse
 import shutil
 import struct
 import json
+import threading
 from collections import defaultdict
 
 # --- CONFIGURAZIONE PERCORSI ASSOLUTI ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
+CONFIG_FILE = os.path.join(BASE_DIR, 'printer_config.json')
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
@@ -24,9 +26,11 @@ app = Flask(__name__, template_folder=TEMPLATE_DIR)
 SEDE = "MARINA"
 DB_NAME = "lavanderia.db"
 
-# --- CONFIGURAZIONE MAGAZZINO REMOTO (ARUBA) ---
-REMOTE_URL = "https://www.lavanderiaigea.com/api_magazzino.php" 
-REMOTE_SECRET = "WASHIFY_SECURE_KEY" 
+# --- CONFIGURAZIONE SINCRONIZZAZIONE E MAGAZZINO (ARUBA) ---
+# *** MODIFICA QUI GLI INDIRIZZI SEPARATI ***
+REMOTE_SYNC_URL = "http://www.lavanderiaigea.com/api_sync.php"          # Indirizzo per Sync
+REMOTE_MAGAZZINO_URL = "http://www.lavanderiaigea.com/api_magazzino.php" # Indirizzo per Magazzino
+REMOTE_SECRET = "WASHIFY_SECURE_KEY" # Deve essere uguale a quello nel PHP
 
 # --- CONFIGURAZIONE WHATSAPP ---
 PATH_WA_OUT = r"C:\Washify_Whatsapp\Da_Inviare"
@@ -76,7 +80,6 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (chiave TEXT PRIMARY KEY, valore TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS listino (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria TEXT, capo TEXT, prezzo REAL)''')
     
-    # --- AGGIORNAMENTI SCHEMA ---
     try: cursor.execute("SELECT ordine FROM listino LIMIT 1")
     except: cursor.execute("ALTER TABLE listino ADD COLUMN ordine INTEGER DEFAULT 0"); cursor.execute("UPDATE listino SET ordine = id")
         
@@ -104,7 +107,11 @@ def init_db():
     conn.commit()
 
     defaults = [
-        ("printer_star", "Star TSP100 Cutter (TSP143)"), ("port_labels", "COM1"), ("ip_fiscal", "192.168.1.8"), 
+        ("printer_star", "Star TSP100 Cutter (TSP143)"), 
+        ("printer_receipt_emulation", "STAR"), 
+        ("port_labels", "COM1"), 
+        ("printer_label_emulation", "STAR"),    
+        ("ip_fiscal", "192.168.1.8"), 
         ("fiscal_always", "0"), ("last_reset_date", "2000-01-01 00:00:00"),
         ("ticket_header", f"LAVANDERIA WASHIFY\n{SEDE}\nVia Roma, 10 - Tel. 071.xxxxx"),
         ("ticket_footer", "Grazie e Arrivederci!"),
@@ -112,16 +119,47 @@ def init_db():
         ("font_header", "wide"), ("font_num", "big"), ("font_customer", "big"),
         ("font_items", "norm"), ("font_total", "huge"), ("font_footer", "norm"),
         ("font_label_row1", "huge"), ("font_label_row2", "huge"), 
-        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12")                      
+        ("font_label_row3", "norm"), ("font_label_row4", "norm"), ("label_feed", "12"),
+        ("fidelity_card_active", "0")                    
     ]
     
     for k, v in defaults: cursor.execute("INSERT OR IGNORE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                external_config = json.load(f)
+                for k, v in external_config.items():
+                    cursor.execute("INSERT OR REPLACE INTO settings (chiave, valore) VALUES (?, ?)", (k, v))
+                print(f"--- CONFIGURAZIONE CARICATA DA FILE ESTERNO ({CONFIG_FILE}) ---")
+        except Exception as e:
+            print(f"ERRORE caricamento file config stampanti: {e}")
+    else:
+        keys_to_export = ["printer_star", "printer_receipt_emulation", "port_labels", "printer_label_emulation", "ip_fiscal", "ticket_header", "label_custom_text", "ticket_footer"]
+        defaults_dict = dict(defaults)
+        export_data = {k: defaults_dict.get(k, "") for k in keys_to_export}
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(export_data, f, indent=4)
+        except Exception as e:
+            print(f"ERRORE creazione file config: {e}")
+
     cursor.execute("INSERT OR IGNORE INTO clienti (id, nome, cognome, telefono, citta) VALUES (1, 'CLIENTE', 'AL BANCO', '', '')")
     
-    cursor.execute("SELECT COUNT(*) FROM listino")
-    if cursor.fetchone()[0] == 0: 
-        for idx, item in enumerate(LISTINO_DEFAULT):
-            cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", (item[0], item[1], item[2], item[3], idx))
+    cursor.execute("SELECT MAX(ordine) FROM listino")
+    res_ord = cursor.fetchone()
+    current_max_order = res_ord[0] if res_ord[0] is not None else -1
+
+    for item in LISTINO_DEFAULT:
+        cat_temp = item[0]; capo_temp = item[1]; prezzo_def = item[2]; stocc_def = item[3]
+        cursor.execute("SELECT id FROM listino WHERE categoria = ? AND capo = ?", (cat_temp, capo_temp))
+        existing = cursor.fetchone()
+
+        if not existing:
+            current_max_order += 1
+            print(f"-> Aggiunta nuova voce listino da aggiornamento: {capo_temp}")
+            cursor.execute("INSERT INTO listino (categoria, capo, prezzo, tipo_stoccaggio, ordine) VALUES (?, ?, ?, ?, ?)", 
+                           (cat_temp, capo_temp, prezzo_def, stocc_def, current_max_order))
     
     conn.commit()
     conn.close()
@@ -168,7 +206,7 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
     s = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(10) # Timeout sicuro
+        s.settimeout(10)
         
         try:
             print("1. Connessione...")
@@ -177,16 +215,14 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
             print(f"ERRORE CONNESSIONE: {e}")
             return False
 
-        # --- FASE 1: SBLOCCO ---
         print("2. Esecuzione Reset...")
-        s.sendall(b'\x1b@') # Reset Hardware
+        s.sendall(b'\x1b@') 
         time.sleep(0.1)
-        s.sendall(b'C\r\n') # Clear Tasto C
+        s.sendall(b'C\r\n') 
         time.sleep(0.1) 
-        s.sendall(b'1A\r\n') # Annulla Scontrino
+        s.sendall(b'1A\r\n') 
         time.sleep(0.5) 
 
-        # --- FASE 2: STAMPA DATI ---
         print("3. Invio Nuovi Dati...")
         
         for item in items:
@@ -200,15 +236,9 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
             if valore < 0.00: continue
 
             prezzo_str = f"{valore:.2f}"
-            
-            # Comando Corretto: "Descrizione"PrezzoH1R
-            # H = Vendita Reparto, 1 = Num Reparto, R = Registra
             comando = f'"{desc}"{prezzo_str}H1R\r\n'
             
             s.sendall(comando.encode('latin1', errors='ignore'))
-            
-            # --- PAUSA BUFFER FONDAMENTALE ---
-            # Senza questa pausa, se mandi 10 capi, la stampante si "strozza" e taglia lo scontrino.
             time.sleep(0.15) 
 
         if codice_lotteria:
@@ -216,7 +246,6 @@ def stampa_fiscale_vendita(items, totale, codice_lotteria=""):
             s.sendall(cmd_lotteria.encode('latin1'))
             time.sleep(0.15)
         
-        # --- FASE 3: CHIUSURA ---
         print("4. Chiusura Scontrino (1T)...")
         s.sendall(b"1T\r\n")
         
@@ -246,7 +275,7 @@ def esegui_chiusura_fiscale():
         s.sendall(b"1A\r\n") 
         time.sleep(0.5)
         
-        s.sendall(b"1F\r\n") # Chiusura
+        s.sendall(b"1F\r\n") 
         time.sleep(2.0)
         
         s.close()
@@ -254,22 +283,37 @@ def esegui_chiusura_fiscale():
     except Exception as e: return False, f"Errore: {str(e)}"
 
 # --- FONTS ---
-def get_star_font(size_name):
-    if size_name == "huge": return b'\x1bW\x02\x1bh\x02' 
-    if size_name == "big":  return b'\x1bW\x01\x1bh\x01' 
-    if size_name == "wide": return b'\x1bW\x01\x1bh\x00' 
-    if size_name == "high": return b'\x1bW\x00\x1bh\x01' 
-    return b'\x1bW\x00\x1bh\x00' 
+def get_receipt_font(size_name, emulation="STAR"):
+    if emulation == "STAR":
+        if size_name == "huge": return b'\x1bW\x02\x1bh\x02' 
+        if size_name == "big":  return b'\x1bW\x01\x1bh\x01' 
+        if size_name == "wide": return b'\x1bW\x01\x1bh\x00' 
+        if size_name == "high": return b'\x1bW\x00\x1bh\x01' 
+        return b'\x1bW\x00\x1bh\x00'
+    
+    else:
+        if size_name == "huge": return b'\x1d!\x11'
+        if size_name == "big":  return b'\x1d!\x11'
+        if size_name == "wide": return b'\x1d!\x01'
+        if size_name == "high": return b'\x1d!\x10'
+        return b'\x1b!\x00'
 
-def get_label_font_command(size_name):
-    if size_name == "huge" or size_name == "big": return b'\x1b!\x30' 
-    if size_name == "wide": return b'\x1b!\x20' 
-    if size_name == "high": return b'\x1b!\x10' 
-    return b'\x1b!\x00' 
+def get_label_font_command(size_name, emulation="STAR"):
+    if emulation == "STAR":
+        if size_name == "huge" or size_name == "big": return b'\x1b!\x30' 
+        if size_name == "wide": return b'\x1b!\x20' 
+        if size_name == "high": return b'\x1b!\x10' 
+        return b'\x1b!\x00' 
+    else: 
+        if size_name == "huge" or size_name == "big": return b'\x1d!\x11' 
+        if size_name == "wide": return b'\x1d!\x01' 
+        if size_name == "high": return b'\x1d!\x10' 
+        return b'\x1b!\x00'
 
 # --- STAMPE ---
 def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
     porta = get_setting("port_labels")
+    emulation = get_setting("printer_label_emulation") or "STAR"
     listino_vendita = get_listino_dict().get("PRODOTTI VENDITA", {})
     is_singola = len(items_con_id) == 1
     capi = [x for x in items_con_id if is_singola or x['nome'] not in listino_vendita]
@@ -277,14 +321,23 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
     tot = len(capi)
     if tot == 0: return True
     
-    f_row1 = get_label_font_command(get_setting("font_label_row1") or "huge")
-    f_row2 = get_label_font_command(get_setting("font_label_row2") or "huge")
-    f_row3 = get_label_font_command(get_setting("font_label_row3") or "norm")
+    f_row1 = get_label_font_command(get_setting("font_label_row1") or "huge", emulation)
+    f_row2 = get_label_font_command(get_setting("font_label_row2") or "huge", emulation)
+    f_row3 = get_label_font_command(get_setting("font_label_row3") or "norm", emulation)
     
     try: feed_lines = int(get_setting("label_feed") or 12)
     except: feed_lines = 12
     
-    CMD_CUT = b'\x1bi'; SPACE_COMPACT = b'\x1b3\x12'; BOLD_ON = b'\x1bE\x01'; BOLD_OFF = b'\x1bE\x00'; ALIGN_LEFT = b'\x1ba\x00'; CP_PC858 = b'\x1bt\x13'
+    if emulation == "STAR":
+        CMD_CUT = b'\x1bi'
+        SPACE_COMPACT = b'\x1b3\x12'
+        BOLD_ON = b'\x1bE\x01'; BOLD_OFF = b'\x1bE\x00'
+        ALIGN_LEFT = b'\x1ba\x00'; CP_PC858 = b'\x1bt\x13'; FEED_CMD = b'\x1bd'
+    else: 
+        CMD_CUT = b'\x1dVA0'
+        SPACE_COMPACT = b'\x1b3\x12'
+        BOLD_ON = b'\x1bE\x01'; BOLD_OFF = b'\x1bE\x00'
+        ALIGN_LEFT = b'\x1ba\x00'; CP_PC858 = b'\x1bt\x13'; FEED_CMD = b'\x1bd'
 
     try:
         def enc(t): return t.encode('cp858', errors='replace')
@@ -311,36 +364,45 @@ def stampa_etichette(num_visibile, items_con_id, cliente_nome, data_ritiro_str):
             
             riga_completa = f"{riga_capo} R:{data_ritiro_str}"
             write(f_row3 + BOLD_ON + enc(f"{riga_completa}\n") + BOLD_OFF)
-            write(b'\x1bd' + bytes([feed_lines])); write(CMD_CUT)
+            write(FEED_CMD + bytes([feed_lines])); write(CMD_CUT)
         close()
         return True
     except Exception as e: return False
 
 def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto, acconto, data_ritiro_str, pagato, metodo, is_approx_date=False, codice_lotteria=""):
     stampante = get_setting("printer_star")
+    emulation = get_setting("printer_receipt_emulation") or "STAR"
     header_text = get_setting("ticket_header")
     footer_text = get_setting("ticket_footer")
     print_logo = get_setting("print_logo") == "1"
     
     stringa_data_ritiro_stampa = "Data Approssimativa 30 Giorni" if is_approx_date else f"Ritiro dal: {data_ritiro_str}"
     
-    S_HEAD = get_star_font(get_setting("font_header") or "wide")
-    S_NUM  = get_star_font(get_setting("font_num") or "big")
-    S_CUST = get_star_font(get_setting("font_customer") or "big")
-    S_ITEM = get_star_font(get_setting("font_items") or "norm")
-    S_TOT  = get_star_font(get_setting("font_total") or "huge") 
-    S_FOOT = get_star_font(get_setting("font_footer") or "norm")
-    S_NORM = get_star_font("norm"); S_WIDE = get_star_font("wide")
+    S_HEAD = get_receipt_font(get_setting("font_header") or "wide", emulation)
+    S_NUM  = get_receipt_font(get_setting("font_num") or "big", emulation)
+    S_CUST = get_receipt_font(get_setting("font_customer") or "big", emulation)
+    S_ITEM = get_receipt_font(get_setting("font_items") or "norm", emulation)
+    S_TOT  = get_receipt_font(get_setting("font_total") or "huge", emulation) 
+    S_FOOT = get_receipt_font(get_setting("font_footer") or "norm", emulation)
+    S_NORM = get_receipt_font("norm", emulation); S_WIDE = get_receipt_font("wide", emulation)
+
+    if emulation == "STAR":
+        ALIGN_CENTER = b'\x1b\x1d\x61\x01'; ALIGN_LEFT = b'\x1b\x1d\x61\x00'
+        BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'
+        CMD_LOGO = b'\x1b\x1c\x70\x01\x00\r\n'; CMD_CP858 = b'\x1b\x1d\x74\x04'; EURO = b'\xd5' 
+    else: 
+        ALIGN_CENTER = b'\x1ba\x01'; ALIGN_LEFT = b'\x1ba\x00'
+        BOLD_ON = b'\x1bE\x01'; BOLD_OFF = b'\x1bE\x00'; CUT = b'\x1dVA0'
+        CMD_LOGO = b''; CMD_CP858 = b'\x1bt\x13'; EURO = b'\xd5'
 
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("Scontrino", None, "RAW")); win32print.StartPagePrinter(hPrinter)
-            ALIGN_CENTER = b'\x1b\x1d\x61\x01'; ALIGN_LEFT = b'\x1b\x1d\x61\x00'
-            BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_LOGO = b'\x1b\x1c\x70\x01\x00\r\n'; CMD_CP858 = b'\x1b\x1d\x74\x04'; EURO = b'\xd5' 
+            
             def enc(txt): return txt.encode('cp858', errors='replace')
             buffer = b'\x1b@' + CMD_CP858 
-            if print_logo: buffer += ALIGN_CENTER + CMD_LOGO + ALIGN_LEFT
+            if print_logo and emulation == "STAR": buffer += ALIGN_CENTER + CMD_LOGO + ALIGN_LEFT
             buffer += ALIGN_CENTER + S_HEAD + BOLD_ON
             if header_text:
                 for r in header_text.split('\n'): buffer += enc(r) + b"\n"
@@ -388,14 +450,20 @@ def stampa_scontrino(num_visibile, data, cliente_nome, carrello, totale, sconto,
 
 def stampa_riepilogo_ordine_printer(num_visibile, cliente_nome, data_ritiro):
     stampante = get_setting("printer_star")
-    S_HUGE = get_star_font("huge") 
+    emulation = get_setting("printer_receipt_emulation") or "STAR"
+    S_HUGE = get_receipt_font("huge", emulation) 
     
+    if emulation == "STAR":
+        ALIGN_CENTER = b'\x1b\x1d\x61\x01'
+        BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_CP858 = b'\x1b\x1d\x74\x04'
+    else: 
+        ALIGN_CENTER = b'\x1ba\x01'
+        BOLD_ON = b'\x1bE\x01'; BOLD_OFF = b'\x1bE\x00'; CUT = b'\x1dVA0'; CMD_CP858 = b'\x1bt\x13'
+
     try:
         hPrinter = win32print.OpenPrinter(stampante)
         try:
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("Riepilogo", None, "RAW")); win32print.StartPagePrinter(hPrinter)
-            ALIGN_CENTER = b'\x1b\x1d\x61\x01'
-            BOLD_ON = b'\x1bE'; BOLD_OFF = b'\x1bF'; CUT = b'\x1bd\x02'; CMD_CP858 = b'\x1b\x1d\x74\x04'
             def enc(txt): return txt.encode('cp858', errors='replace')
             
             buffer = b'\x1b@' + CMD_CP858 
@@ -440,7 +508,104 @@ def parse_catena_range(catena_str):
     except ValueError: pass 
     return numeri
 
-# --- ROTTE API ---
+# --- FUNZIONE SINCRONIZZAZIONE (NUOVA) ---
+def background_sync_task():
+    """
+    Funzione eseguita in un thread separato ogni 60 secondi.
+    Invia i dati locali al server e recupera eventuali aggiornamenti esterni.
+    USA REMOTE_SYNC_URL
+    """
+    while True:
+        try:
+            print(f"--- [SYNC] Avvio sincronizzazione alle {datetime.now().strftime('%H:%M:%S')} ---")
+            
+            # --- 1. PREPARAZIONE DATI UPLOAD (Ordini Recenti o Modificati) ---
+            conn = get_db()
+            cursor = conn.cursor()
+            
+            # Prendiamo gli ultimi 50 ordini per sicurezza (oppure si potrebbe filtrare per data modifica)
+            cursor.execute("SELECT * FROM ordini ORDER BY id DESC LIMIT 50")
+            orders_rows = cursor.fetchall()
+            
+            payload_orders = []
+            
+            for o in orders_rows:
+                # Recupera dettagli
+                cursor.execute("SELECT * FROM dettagli_ordine WHERE ordine_id=?", (o['id'],))
+                dettagli = [dict(r) for r in cursor.fetchall()]
+                
+                # Recupera nome cliente
+                cursor.execute("SELECT nome, cognome FROM clienti WHERE id=?", (o['cliente_id'],))
+                cli = cursor.fetchone()
+                nome_cli = f"{cli['nome']} {cli['cognome'] or ''}".strip() if cli else "Sconosciuto"
+                
+                # Convertiamo le date in stringa se necessario
+                data_in = str(o['data_ingresso'])
+                
+                payload_orders.append({
+                    'sede': SEDE,
+                    'id': o['id'],
+                    'num_scontrino': o['num_scontrino'],
+                    'cliente_nome': nome_cli,
+                    'data_ingresso': data_in,
+                    'data_ritiro': o['data_ritiro'],
+                    'totale': float(o['totale']),
+                    'acconto': float(o['acconto']),
+                    'stato': o['stato'],
+                    'dettagli': dettagli
+                })
+            
+            conn.close()
+            
+            # --- 2. ESECUZIONE UPLOAD (Verso PHP) ---
+            if payload_orders:
+                data_req = json.dumps({
+                    'secret': REMOTE_SECRET,
+                    'action': 'upload',
+                    'orders': payload_orders
+                }).encode('utf-8')
+                
+                # *** QUI USO REMOTE_SYNC_URL ***
+                req = urllib.request.Request(REMOTE_SYNC_URL, data=data_req, headers={'Content-Type': 'application/json', 'User-Agent': 'WashifySync'})
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        resp_data = json.loads(response.read().decode('utf-8'))
+                        if resp_data.get('status') == 'success':
+                            print(f"--- [SYNC UPLOAD] Successo! Processati: {resp_data.get('processed')} ordini ---")
+                        else:
+                            print(f"--- [SYNC UPLOAD] Errore dal server: {resp_data.get('msg')} ---")
+                except urllib.error.URLError as e:
+                    print(f"--- [SYNC UPLOAD] Errore connessione: {e.reason} ---")
+
+            # --- 3. ESECUZIONE DOWNLOAD (Dati dagli ALTRI negozi) ---
+            # Nota: Al momento li scarichiamo solo per loggarli, per evitare conflitti ID nel DB locale
+            data_down = json.dumps({
+                'secret': REMOTE_SECRET,
+                'action': 'download',
+                'sede': SEDE
+            }).encode('utf-8')
+            
+            # *** QUI USO REMOTE_SYNC_URL ***
+            req_down = urllib.request.Request(REMOTE_SYNC_URL, data=data_down, headers={'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(req_down, timeout=10) as response:
+                    resp_down = json.loads(response.read().decode('utf-8'))
+                    if resp_down.get('status') == 'success':
+                        esterni = resp_down.get('data', [])
+                        if esterni:
+                            print(f"--- [SYNC DOWNLOAD] Trovati {len(esterni)} ordini da altre sedi ---")
+                            # Qui in futuro potrai salvare questi dati in una tabella separata 'ordini_esterni'
+            except Exception as e:
+                print(f"--- [SYNC DOWNLOAD] Errore: {e} ---")
+
+        except Exception as e:
+            print(f"!!! ERRORE GENERALE THREAD SYNC: {str(e)} !!!")
+        
+        # Attesa di 60 secondi prima del prossimo ciclo
+        time.sleep(60)
+
+
+# --- ROTTE API FLASK ---
 @app.route('/')
 def home():
     listino_db = get_listino_dict()
@@ -453,7 +618,9 @@ def api_magazzino_proxy():
         payload['secret'] = REMOTE_SECRET
         if 'sede' not in payload: payload['sede'] = SEDE
         data_encoded = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(REMOTE_URL, data=data_encoded, headers={'Content-Type': 'application/json', 'User-Agent': 'WashifyClient'})
+        
+        # *** QUI USO REMOTE_MAGAZZINO_URL ***
+        req = urllib.request.Request(REMOTE_MAGAZZINO_URL, data=data_encoded, headers={'Content-Type': 'application/json', 'User-Agent': 'WashifyClient'})
         with urllib.request.urlopen(req, timeout=10) as response:
             resp_data = response.read().decode('utf-8')
             return jsonify(json.loads(resp_data))
@@ -503,7 +670,17 @@ def api_get_settings():
 
 @app.route('/api/save_settings', methods=['POST'])
 def api_save_settings():
-    for k, v in request.json.items(): set_setting(k, v)
+    received_data = request.json
+    for k, v in received_data.items(): set_setting(k, v)
+    try:
+        current_config = {}
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                try: current_config = json.load(f)
+                except: current_config = {}
+        for k, v in received_data.items(): current_config[k] = v
+        with open(CONFIG_FILE, 'w') as f: json.dump(current_config, f, indent=4)
+    except Exception as e: print(f"Errore salvataggio config esterno: {e}")
     return jsonify({'status': 'success'})
 
 @app.route('/api/reset_counters', methods=['POST'])
@@ -582,7 +759,6 @@ def modifica_cliente():
 @app.route('/cerca_ordini_aperti')
 def cerca_ordini_aperti():
     q = request.args.get('q', ''); cliente_id = request.args.get('cliente_id', ''); conn = get_db(); cursor = conn.cursor()
-    # NB: data_ritiro è già presente nella select
     sql = """SELECT DISTINCT o.id, o.num_scontrino, o.data_ingresso, o.data_ritiro, o.totale, o.acconto, o.pagamenti_parziali, o.pagato, o.fiscale_emesso, o.fiscale_desk, c.nome, c.cognome, c.telefono, (SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = o.id AND stato_lavorazione = 0) as non_pronti, (SELECT GROUP_CONCAT(DISTINCT numero_catena || ' (' || tipo_stoccaggio || ')') FROM dettagli_ordine WHERE ordine_id = o.id AND numero_catena != '') as posizioni FROM ordini o JOIN clienti c ON o.cliente_id = c.id LEFT JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE o.stato != 'Consegnato' AND o.stato != 'Sospeso'"""
     conditions = []
     if cliente_id: conditions.append(f"o.cliente_id = {cliente_id}")
@@ -595,12 +771,8 @@ def cerca_ordini_aperti():
         d = dict(row); d['cliente_nome'] = f"{d['nome']} {d['cognome'] or ''}".strip()
         d['residuo'] = max(0, d['totale'] - (d['acconto'] or 0) - (d['pagamenti_parziali'] or 0))
         d['tutto_pronto'] = (d['non_pronti'] == 0)
-        
-        try:
-            d['data_ingresso_str'] = datetime.strptime(str(d['data_ingresso']).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
-        except:
-            d['data_ingresso_str'] = d['data_ingresso']
-            
+        try: d['data_ingresso_str'] = datetime.strptime(str(d['data_ingresso']).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+        except: d['data_ingresso_str'] = d['data_ingresso']
         items.append(d)
     conn.close(); return jsonify(items)
 
@@ -616,111 +788,46 @@ def get_dettagli_ordine(ordine_id):
 
 @app.route('/consegna_items', methods=['POST'])
 def consegna_items():
-    ids = request.json.get('ids', [])
-    incasso = float(request.json.get('incasso', 0))
-    sconto_extra = float(request.json.get('sconto_extra', 0))
-    richiesta_fiscale = request.json.get('stampa_fiscale', False)
-    metodo = request.json.get('metodo_pagamento', '')
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    capi_ritirati = []
-    ordine_id = None
-    
+    ids = request.json.get('ids', []); incasso = float(request.json.get('incasso', 0)); sconto_extra = float(request.json.get('sconto_extra', 0)); richiesta_fiscale = request.json.get('stampa_fiscale', False); metodo = request.json.get('metodo_pagamento', '')
+    conn = get_db(); cursor = conn.cursor(); capi_ritirati = []; ordine_id = None
     if ids:
-        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],))
-        res = cursor.fetchone()
+        cursor.execute("SELECT ordine_id FROM dettagli_ordine WHERE id = ?", (ids[0],)); res = cursor.fetchone()
         if res: ordine_id = res[0]
-    
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Aggiorno stato ritirato
     for item_id in ids:
         cursor.execute("UPDATE dettagli_ordine SET ritirato = 1, data_ritiro_effettivo = ? WHERE id = ?", (now_str, item_id))
-        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,))
-        capi_ritirati.append(dict(cursor.fetchone()))
-    
+        cursor.execute("SELECT capo as nome, prezzo FROM dettagli_ordine WHERE id = ?", (item_id,)); capi_ritirati.append(dict(cursor.fetchone()))
     msg = "Nessuna stampa."
-    
     if ordine_id:
-        # Aggiorno i totali dell'ordine
-        if sconto_extra > 0:
-            cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
-        
+        if sconto_extra > 0: cursor.execute("UPDATE ordini SET sconto = sconto + ?, totale = totale - ? WHERE id = ?", (sconto_extra, sconto_extra, ordine_id))
         if incasso > 0: 
-            if metodo:
-                cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
-            else:
-                cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ? WHERE id = ?", (incasso, ordine_id))
-        
-        # Controllo se l'ordine è saldato
-        cursor.execute("SELECT totale, acconto, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,))
-        r = cursor.fetchone()
+            if metodo: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ?, metodo_pagamento = ? WHERE id = ?", (incasso, metodo, ordine_id))
+            else: cursor.execute("UPDATE ordini SET pagamenti_parziali = pagamenti_parziali + ? WHERE id = ?", (incasso, ordine_id))
+        cursor.execute("SELECT totale, acconto, pagamenti_parziali FROM ordini WHERE id = ?", (ordine_id,)); r = cursor.fetchone()
         totale_pagato = (r['acconto'] or 0) + (r['pagamenti_parziali'] or 0)
-        
-        if totale_pagato >= r['totale'] - 0.01:
-            cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
-        
-        # Controllo se tutto l'ordine è stato consegnato
+        if totale_pagato >= r['totale'] - 0.01: cursor.execute("UPDATE ordini SET pagato = 1 WHERE id = ?", (ordine_id,))
         cursor.execute("SELECT COUNT(*) FROM dettagli_ordine WHERE ordine_id = ? AND ritirato = 0", (ordine_id,))
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
-            
-        # --- GESTIONE STAMPA FISCALE ---
+        if cursor.fetchone()[0] == 0: cursor.execute("UPDATE ordini SET stato = 'Consegnato' WHERE id = ?", (ordine_id,))
         if richiesta_fiscale:
             cursor.execute("UPDATE ordini SET fiscale_emesso = 1 WHERE id = ?", (ordine_id,))
-            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,))
-            res_cli = cursor.fetchone()
-            cod_lotteria = res_cli[0] if res_cli else ""
-            
+            cursor.execute("SELECT c.codice_lotteria FROM clienti c JOIN ordini o ON o.cliente_id = c.id WHERE o.id = ?", (ordine_id,)); res_cli = cursor.fetchone(); cod_lotteria = res_cli[0] if res_cli else ""
             valore_totale_capi_selezionati = sum(item['prezzo'] for item in capi_ritirati)
-            
-            # LOGICA IMPORTI
-            if incasso <= 0.01:
-                # Caso TOTALE A ZERO (Sconto 100% o già pagato)
-                msg = "Importo €0.00: Merce scaricata, niente scontrino fiscale."
-            
+            if incasso <= 0.01: msg = "Importo €0.00: Merce scaricata, niente scontrino fiscale."
             else:
                 items_da_fiscale = []
-                
-                # CASO 1: L'incasso combacia con la somma dei prezzi (Nessuno sconto extra)
-                if abs(incasso - valore_totale_capi_selezionati) < 0.05:
-                    items_da_fiscale = capi_ritirati
-                
-                # CASO 2: C'è uno sconto (L'incasso è minore del valore dei capi)
-                # Dobbiamo riproporzionare i prezzi per mantenere i nomi dei capi
+                if abs(incasso - valore_totale_capi_selezionati) < 0.05: items_da_fiscale = capi_ritirati
                 elif valore_totale_capi_selezionati > 0:
-                    fattore_sconto = incasso / valore_totale_capi_selezionati
-                    running_total = 0.0
-                    
+                    fattore_sconto = incasso / valore_totale_capi_selezionati; running_total = 0.0
                     for i, item in enumerate(capi_ritirati):
-                        # Calcolo nuovo prezzo scontato per il singolo capo
                         nuovo_prezzo = round(item['prezzo'] * fattore_sconto, 2)
-                        
-                        # Fix arrotondamento sull'ultimo elemento per far tornare il totale esatto al centesimo
-                        if i == len(capi_ritirati) - 1:
-                            nuovo_prezzo = incasso - running_total
-                            if nuovo_prezzo < 0: nuovo_prezzo = 0 
-                        
+                        if i == len(capi_ritirati) - 1: nuovo_prezzo = incasso - running_total; 
+                        if nuovo_prezzo < 0: nuovo_prezzo = 0 
                         running_total += nuovo_prezzo
-                        
-                        items_da_fiscale.append({
-                            'nome': item['nome'],
-                            'prezzo': nuovo_prezzo
-                        })
-                else:
-                    # Fallback generico (molto raro)
-                    items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
-                
-                # Invio alla stampante
-                if stampa_fiscale_vendita(items_da_fiscale, incasso, cod_lotteria):
-                    msg = "✅ Scontrino Fiscale Stampato!"
-                else:
-                    msg = "❌ Errore Stampa Fiscale!"
-
-    conn.commit()
-    conn.close()
-    return jsonify({'status': 'success', 'msg': msg})
+                        items_da_fiscale.append({'nome': item['nome'], 'prezzo': nuovo_prezzo})
+                else: items_da_fiscale = [{'nome': 'Ritiro Capi', 'prezzo': incasso}]
+                if stampa_fiscale_vendita(items_da_fiscale, incasso, cod_lotteria): msg = "✅ Scontrino Fiscale Stampato!"
+                else: msg = "❌ Errore Stampa Fiscale!"
+    conn.commit(); conn.close(); return jsonify({'status': 'success', 'msg': msg})
 
 @app.route('/salva_ordine', methods=['POST'])
 def salva_ordine():
@@ -956,27 +1063,12 @@ def storico_cliente(cliente_id):
         if oid not in storico: 
             d_eff = r['data_effettiva']
             if d_eff:
-                try:
-                    d_eff = datetime.strptime(str(d_eff).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
-                except:
-                    d_eff = str(d_eff)[:10] 
-            else:
-                d_eff = "-"
-            
-            try:
-                data_ing_fmt = datetime.strptime(r['data_ingresso'].split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
-            except:
-                data_ing_fmt = r['data_ingresso']
-
-            storico[oid] = {
-                'num_scontrino': r['num_scontrino'], 
-                'data_ingresso': r['data_ingresso'], 
-                'data_ingresso_formatted': data_ing_fmt, 
-                'data_ritiro': r['data_ritiro'], 
-                'data_ritiro_effettivo': d_eff, 
-                'totale': r['totale'], 
-                'capi': []
-            }
+                try: d_eff = datetime.strptime(str(d_eff).split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+                except: d_eff = str(d_eff)[:10] 
+            else: d_eff = "-"
+            try: data_ing_fmt = datetime.strptime(r['data_ingresso'].split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+            except: data_ing_fmt = r['data_ingresso']
+            storico[oid] = {'num_scontrino': r['num_scontrino'], 'data_ingresso': r['data_ingresso'], 'data_ingresso_formatted': data_ing_fmt, 'data_ritiro': r['data_ritiro'], 'data_ritiro_effettivo': d_eff, 'totale': r['totale'], 'capi': []}
         storico[oid]['capi'].append({'capo': r['capo'], 'prezzo': r['prezzo']})
     return jsonify(list(storico.values()))
 
@@ -984,15 +1076,10 @@ def storico_cliente(cliente_id):
 def api_get_stats():
     start_date = request.args.get('start', '2000-01-01'); end_date_raw = request.args.get('end', '2100-01-01')
     q_capo = request.args.get('search_capo', '').strip() 
-    
     conn = get_db(); cursor = conn.cursor()
-
-    # --- CALCOLO DATE ANNO SCORSO ---
-    s_date = datetime.strptime(start_date, "%Y-%m-%d")
-    e_date = datetime.strptime(end_date_raw, "%Y-%m-%d")
+    s_date = datetime.strptime(start_date, "%Y-%m-%d"); e_date = datetime.strptime(end_date_raw, "%Y-%m-%d")
     prev_start = (s_date - timedelta(days=366 if (s_date.year - 1) % 4 == 0 else 365)).strftime("%Y-%m-%d")
     prev_end = (e_date - timedelta(days=366 if (e_date.year - 1) % 4 == 0 else 365)).strftime("%Y-%m-%d")
-
     daily_stats = defaultdict(lambda: {'items': 0, 'revenue': 0.0, 'fiscal': 0})
     cursor.execute("""SELECT date(o.data_ingresso) as data, count(d.id) as tot_capi FROM ordini o JOIN dettagli_ordine d ON o.id = d.ordine_id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY date(o.data_ingresso)""", (start_date, end_date_raw))
     for r in cursor.fetchall(): daily_stats[r['data']]['items'] = r['tot_capi']
@@ -1002,79 +1089,54 @@ def api_get_stats():
         daily_stats[r['data']]['fiscal'] = r['tot_fiscali'] if r['tot_fiscali'] else 0
     trend_daily = []
     for d in sorted(daily_stats.keys()): trend_daily.append({'data': d, 'items': daily_stats[d]['items'], 'revenue': daily_stats[d]['revenue'], 'fiscal': daily_stats[d]['fiscal']})
-    
     cursor.execute("""SELECT d.capo, count(d.id) as qty FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY d.capo ORDER BY qty DESC LIMIT 10""", (start_date, end_date_raw))
     top_items = [dict(row) for row in cursor.fetchall()]
-
-    # --- STATS CORRENTI ---
     cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); fiscal_count = cursor.fetchone()[0]
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); fiscal_value = cursor.fetchone()[0] or 0.0
     cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (start_date, end_date_raw)); total_revenue = cursor.fetchone()[0] or 0.0
     cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); capi_entrati_period = cursor.fetchone()[0] or 0
-    
-    # --- STATS ANNO PRECEDENTE ---
-    cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
-    prev_fiscal_count = cursor.fetchone()[0] or 0
-    cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
-    prev_fiscal_value = cursor.fetchone()[0] or 0.0
-    cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end))
-    prev_total_revenue = cursor.fetchone()[0] or 0.0
-    cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (prev_start, prev_end))
-    prev_capi_entrati = cursor.fetchone()[0] or 0
-
+    cursor.execute("SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end)); prev_fiscal_count = cursor.fetchone()[0] or 0
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE fiscale_emesso = 1 AND date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end)); prev_fiscal_value = cursor.fetchone()[0] or 0.0
+    cursor.execute("SELECT SUM(totale) FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?", (prev_start, prev_end)); prev_total_revenue = cursor.fetchone()[0] or 0.0
+    cursor.execute("""SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (prev_start, prev_end)); prev_capi_entrati = cursor.fetchone()[0] or 0
     params_clients = (start_date, end_date_raw, start_date, end_date_raw)
     cursor.execute("""SELECT c.nome, c.cognome, SUM(o.totale) as total_spent, (SELECT COUNT(d.id) FROM dettagli_ordine d JOIN ordini o2 ON d.ordine_id = o2.id WHERE o2.cliente_id = c.id AND date(o2.data_ingresso) BETWEEN ? AND ?) as total_items FROM ordini o JOIN clienti c ON o.cliente_id = c.id WHERE date(o.data_ingresso) BETWEEN ? AND ? GROUP BY c.id ORDER BY total_spent DESC LIMIT 10""", params_clients)
     top_clients = [dict(row) for row in cursor.fetchall()]
-    
     cursor.execute("""SELECT SUM(CASE WHEN d.ritirato = 1 THEN 1 ELSE 0 END) as ritirati FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id WHERE date(o.data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_ritiri = cursor.fetchone(); capi_ritirati = row_ritiri[0] or 0
     cursor.execute("""SELECT SUM(CASE WHEN pagato = 1 THEN 1 ELSE 0 END) as pagati, SUM(CASE WHEN pagato = 0 THEN 1 ELSE 0 END) as da_pagare FROM ordini WHERE date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); row_pagamenti = cursor.fetchone(); ordini_pagati = row_pagamenti[0] or 0; ordini_da_pagare = row_pagamenti[1] or 0
     cursor.execute("""SELECT COUNT(*) FROM ordini WHERE fiscale_emesso = 1 AND stato = 'Consegnato' AND date(data_ingresso) BETWEEN ? AND ?""", (start_date, end_date_raw)); scontrini_prodotti = cursor.fetchone()[0]
-    
-    sql_ritirati = """SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso, d.data_ritiro_effettivo 
-                      FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id 
-                      WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ?"""
+    sql_ritirati = """SELECT c.nome, c.cognome, d.capo, d.prezzo, o.data_ingresso, d.data_ritiro_effettivo FROM dettagli_ordine d JOIN ordini o ON d.ordine_id = o.id JOIN clienti c ON o.cliente_id = c.id WHERE d.ritirato = 1 AND date(o.data_ingresso) BETWEEN ? AND ?"""
     params_ritirati = [start_date, end_date_raw]
-    
-    if q_capo:
-        sql_ritirati += " AND d.capo LIKE ?"
-        params_ritirati.append(f"%{q_capo}%")
-        
-    sql_ritirati += " ORDER BY c.nome, c.cognome"
-    
-    cursor.execute(sql_ritirati, params_ritirati)
-    raw_ritirati = cursor.fetchall()
-    
+    if q_capo: sql_ritirati += " AND d.capo LIKE ?"; params_ritirati.append(f"%{q_capo}%")
+    sql_ritirati += " ORDER BY c.nome, c.cognome"; cursor.execute(sql_ritirati, params_ritirati); raw_ritirati = cursor.fetchall()
     ritirati_by_client = defaultdict(list)
     for r in raw_ritirati: 
         data_show = r['data_ritiro_effettivo'] if r['data_ritiro_effettivo'] else r['data_ingresso']
         ritirati_by_client[f"{r['nome']} {r['cognome'] or ''}".strip()].append({'capo': r['capo'], 'prezzo': r['prezzo'], 'data': data_show})
-    
     ritirati_dettaglio = []; 
     for cliente, items in ritirati_by_client.items(): ritirati_dettaglio.append({'cliente': cliente, 'items': items})
     ritirati_dettaglio.sort(key=lambda x: x['cliente']); conn.close()
-    
     return jsonify({
-        'trend_daily': trend_daily, 
-        'top_items': top_items, 
-        'ritirati_dettaglio': ritirati_dettaglio, 
-        'stats': {
-            'fiscal_count': fiscal_count, 
-            'fiscal_value': fiscal_value, 
-            'total_revenue': total_revenue, 
-            'top_clients': top_clients, 
-            'capi_ritirati': capi_ritirati, 
-            'capi_totali': capi_entrati_period, 
-            'ordini_pagati': ordini_pagati, 
-            'ordini_da_pagare': ordini_da_pagare, 
-            'scontrini_prodotti': scontrini_prodotti,
-            'prev_fiscal_count': prev_fiscal_count,
-            'prev_fiscal_value': prev_fiscal_value,
-            'prev_total_revenue': prev_total_revenue,
-            'prev_capi_totali': prev_capi_entrati
-        }
+        'trend_daily': trend_daily, 'top_items': top_items, 'ritirati_dettaglio': ritirati_dettaglio, 
+        'stats': {'fiscal_count': fiscal_count, 'fiscal_value': fiscal_value, 'total_revenue': total_revenue, 'top_clients': top_clients, 'capi_ritirati': capi_ritirati, 'capi_totali': capi_entrati_period, 'ordini_pagati': ordini_pagati, 'ordini_da_pagare': ordini_da_pagare, 'scontrini_prodotti': scontrini_prodotti, 'prev_fiscal_count': prev_fiscal_count, 'prev_fiscal_value': prev_fiscal_value, 'prev_total_revenue': prev_total_revenue, 'prev_capi_totali': prev_capi_entrati}
     })
+
+@app.route('/api/chiudi_gestionale', methods=['POST'])
+def api_chiudi_gestionale():
+    def shutdown_server():
+        time.sleep(1.0)
+        print("--- CHIUSURA SISTEMA ---")
+        os._exit(0)
+    threading.Thread(target=shutdown_server).start()
+    return jsonify({'status': 'success', 'msg': 'Chiusura sistema in corso...'})
 
 if __name__ == '__main__': 
     init_db()
-    print("--- AVVIO WASHIFY V.3.7 (Zero-Amount & Discount Fix) ---")
+    print("--- AVVIO WASHIFY V.3.9 (Con Sincronizzazione Cloud) ---")
+    
+    # AVVIO THREAD DI SINCRONIZZAZIONE
+    sync_thread = threading.Thread(target=background_sync_task, daemon=True)
+    sync_thread.start()
+    print("--- [SYNC] Modulo sincronizzazione avviato in background ---")
+    
     app.run(debug=True, host='0.0.0.0', port=5000)
